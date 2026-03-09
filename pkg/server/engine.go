@@ -15,6 +15,8 @@ import (
 	"github.com/lynxbase/lynxdb/internal/objstore"
 	"github.com/lynxbase/lynxdb/pkg/buffer"
 	"github.com/lynxbase/lynxdb/pkg/cache"
+	ingestcluster "github.com/lynxbase/lynxdb/pkg/cluster/ingest"
+	querycluster "github.com/lynxbase/lynxdb/pkg/cluster/query"
 	"github.com/lynxbase/lynxdb/pkg/config"
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -28,6 +30,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/storage/sources"
 	"github.com/lynxbase/lynxdb/pkg/storage/tiering"
 	"github.com/lynxbase/lynxdb/pkg/storage/views"
+	"golang.org/x/sync/singleflight"
 )
 
 // ErrShuttingDown is returned when ingest is called after PrepareShutdown.
@@ -70,9 +73,10 @@ type Engine struct {
 	metrics *storage.Metrics
 
 	// Disk persistence components (nil when dataDir=="").
-	compactor *compaction.Compactor
-	tierMgr   *tiering.Manager
-	objStore  objstore.ObjectStore
+	compactor       *compaction.Compactor
+	tierMgr         *tiering.Manager
+	objStore        objstore.ObjectStore
+	remoteLoadGroup singleflight.Group // deduplicates concurrent S3 fetches for the same segment
 
 	// Data directory layout (nil when dataDir=="").
 	layout *storage.Layout
@@ -111,11 +115,26 @@ type Engine struct {
 	// Compaction consecutive failure tracker (per-index).
 	compactionFailures *compactionFailureTracker
 
-	// Server, ingest, and views config for memory pool, fsync, and backfill budget.
-	serverCfg config.ServerConfig
-	ingestCfg config.IngestConfig
-	viewsCfg  config.ViewsConfig
-	bufMgrCfg config.BufferManagerConfig
+	// Server, ingest, views, and cluster config.
+	serverCfg  config.ServerConfig
+	ingestCfg  config.IngestConfig
+	viewsCfg   config.ViewsConfig
+	bufMgrCfg  config.BufferManagerConfig
+	clusterCfg config.ClusterConfig
+
+	// Cluster ingest components (all nil in single-node mode).
+	// These are initialized by InitCluster() when cluster mode is enabled
+	// and this node has the ingest role.
+	clusterRouter    *ingestcluster.Router
+	clusterCatalog   *ingestcluster.PartCatalog
+	clusterNotifier  *ingestcluster.PartNotifier
+	clusterSequencer *ingestcluster.BatchSequencer
+	clusterMetaLoss  *ingestcluster.MetaLossDetector
+
+	// Cluster query coordinator (nil in single-node mode).
+	// Initialized by InitClusterQuery() when cluster mode is enabled
+	// and this node has the query role.
+	clusterCoordinator *querycluster.Coordinator
 
 	// OnQueryComplete is an optional callback invoked after every query completes
 	// (success or error). Used by the REST layer to record Prometheus metrics
@@ -135,6 +154,7 @@ type Config struct {
 	Server        config.ServerConfig
 	Views         config.ViewsConfig
 	BufferManager config.BufferManagerConfig
+	Cluster       config.ClusterConfig
 }
 
 // NewEngine creates a new Engine.
@@ -279,6 +299,7 @@ func NewEngine(cfg Config) *Engine {
 		ingestCfg:          cfg.Ingest,
 		viewsCfg:           cfg.Views,
 		bufMgrCfg:          bmCfg,
+		clusterCfg:         cfg.Cluster,
 		sourceRegistry:     sources.NewRegistry(),
 	}
 	e.currentEpoch = &segmentEpoch{

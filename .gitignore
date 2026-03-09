@@ -25,14 +25,10 @@ __pycache__/
 
 # GoReleaser
 dist/
-# Claude
-.claude/
-_plans/
 log20250630.csv
 shading-proposal.md
 es_bulk.md
 dashboard.md
-CLAUDE.md
 /docs/site/node_modules/
 /docs/site/build/
 lynxdb

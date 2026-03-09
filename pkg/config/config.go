@@ -25,7 +25,56 @@ type Config struct {
 	Views         ViewsConfig         `yaml:"views"          json:"views"`
 	Server        ServerConfig        `yaml:"server"         json:"server"`
 	BufferManager BufferManagerConfig `yaml:"buffer_manager" json:"buffer_manager"`
-	Profiles      map[string]Profile  `yaml:"profiles"       json:"profiles"`
+	Cluster       ClusterConfig      `yaml:"cluster"        json:"cluster"`
+	Profiles      map[string]Profile `yaml:"profiles"       json:"profiles"`
+}
+
+// ClusterConfig holds distributed clustering parameters.
+type ClusterConfig struct {
+	// Enabled turns on cluster mode. When false (default), LynxDB runs as a single node.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// NodeID is a unique identifier for this node within the cluster.
+	NodeID string `yaml:"node_id" json:"node_id"`
+	// Roles specifies which roles this node performs: "meta", "ingest", "query".
+	// In small clusters (<10 nodes), every node typically runs all three roles.
+	Roles []string `yaml:"roles" json:"roles"`
+	// Seeds is the list of seed node addresses for cluster discovery (host:grpc_port).
+	Seeds []string `yaml:"seeds" json:"seeds"`
+	// GRPCPort is the port for inter-node gRPC communication.
+	GRPCPort int `yaml:"grpc_port" json:"grpc_port"`
+	// HeartbeatInterval is how often nodes send heartbeats to the meta leader.
+	HeartbeatInterval Duration `yaml:"heartbeat_interval" json:"heartbeat_interval"`
+	// LeaseDuration is the validity period of a shard lease.
+	LeaseDuration Duration `yaml:"lease_duration" json:"lease_duration"`
+	// MaxClockSkew is the maximum tolerated clock skew between cluster nodes.
+	MaxClockSkew Duration `yaml:"max_clock_skew" json:"max_clock_skew"`
+	// VirtualPartitionCount is the total number of virtual partitions for sharding.
+	VirtualPartitionCount int `yaml:"virtual_partition_count" json:"virtual_partition_count"`
+	// TimeBucketSize is the time granularity for shard time bucketing.
+	TimeBucketSize Duration `yaml:"time_bucket_size" json:"time_bucket_size"`
+	// AckLevel controls the durability guarantee for distributed ingest.
+	// "none" = fire-and-forget, "one" = after local commit, "all" = after all ISR ACK.
+	AckLevel string `yaml:"ack_level" json:"ack_level"`
+	// ReplicationFactor is the number of replicas (including primary) for each shard.
+	ReplicationFactor int `yaml:"replication_factor" json:"replication_factor"`
+	// MetaLossTimeout is the duration after the last lease renewal before
+	// entering degraded meta-loss mode (writes accepted without validation).
+	MetaLossTimeout Duration `yaml:"meta_loss_timeout" json:"meta_loss_timeout"`
+
+	// MaxConcurrentShardQueries limits the number of concurrent shard RPCs
+	// during a single scatter-gather query. Default: 50.
+	MaxConcurrentShardQueries int `yaml:"max_concurrent_shard_queries" json:"max_concurrent_shard_queries"`
+	// ShardQueryTimeout is the per-shard query timeout. Default: 30s.
+	ShardQueryTimeout Duration `yaml:"shard_query_timeout" json:"shard_query_timeout"`
+	// PartialResultsEnabled controls whether queries return partial results
+	// when some shards fail. Default: true.
+	PartialResultsEnabled *bool `yaml:"partial_results" json:"partial_results"`
+	// PartialFailureThreshold is the minimum fraction of successful shards
+	// required to return results. Below this, the query fails. Default: 0.5.
+	PartialFailureThreshold float64 `yaml:"partial_failure_threshold" json:"partial_failure_threshold"`
+	// DCHLLThreshold is the cardinality at which dc() promotes from exact
+	// set tracking to HyperLogLog approximation. Default: 10000.
+	DCHLLThreshold int `yaml:"dc_hll_threshold" json:"dc_hll_threshold"`
 }
 
 // TLSConfig holds TLS/HTTPS parameters for the server.
@@ -325,6 +374,23 @@ func DefaultConfig() *Config {
 		Views: ViewsConfig{
 			BackfillBackpressureWait: Duration(5 * time.Second),
 			BackfillMaxRetries:       60,
+		},
+
+		Cluster: ClusterConfig{
+			Enabled:                   false,
+			GRPCPort:                  9400,
+			HeartbeatInterval:         Duration(5 * time.Second),
+			LeaseDuration:             Duration(10 * time.Second),
+			MaxClockSkew:              Duration(50 * time.Millisecond),
+			VirtualPartitionCount:     1024,
+			TimeBucketSize:            Duration(24 * time.Hour),
+			AckLevel:                  "one",
+			ReplicationFactor:         1,
+			MetaLossTimeout:           Duration(30 * time.Second),
+			MaxConcurrentShardQueries: 50,
+			ShardQueryTimeout:         Duration(30 * time.Second),
+			PartialFailureThreshold:   0.5,
+			DCHLLThreshold:            10000,
 		},
 
 		BufferManager: BufferManagerConfig{

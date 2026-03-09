@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -38,6 +39,13 @@ func (e *Engine) Ingest(events []*event.Event) error {
 
 	// Publish to event bus BEFORE batcher (live tail sees events immediately).
 	e.eventBus.Publish(events)
+
+	// Cluster mode: route events to shard primaries via the cluster router.
+	// The router handles local fast path (events for shards owned by this node)
+	// and remote forwarding (events for shards owned by other nodes).
+	if e.clusterRouter != nil {
+		return e.clusterRouter.Route(context.Background(), events)
+	}
 
 	// Buffer in async batcher (flushes to part on threshold).
 	if e.batcher != nil {

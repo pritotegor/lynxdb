@@ -212,3 +212,58 @@ func TestLayout_DataDir(t *testing.T) {
 		t.Errorf("DataDir: got %q, want %q", l.DataDir(), "/data/lynxdb")
 	}
 }
+
+func TestS3PartKey(t *testing.T) {
+	ts := time.Date(2026, 3, 9, 14, 30, 0, 0, time.UTC)
+
+	tests := []struct {
+		name         string
+		index        string
+		partition    uint32
+		timeBucket   time.Time
+		partFilename string
+		want         string
+	}{
+		{
+			name:         "basic",
+			index:        "logs",
+			partition:    0,
+			timeBucket:   ts,
+			partFilename: "part-logs-L0-123456.lsg",
+			want:         "parts/logs/t20260309/p0/part-logs-L0-123456.lsg",
+		},
+		{
+			name:         "high partition",
+			index:        "nginx",
+			partition:    512,
+			timeBucket:   ts,
+			partFilename: "part-nginx-L1-789.lsg",
+			want:         "parts/nginx/t20260309/p512/part-nginx-L1-789.lsg",
+		},
+		{
+			name:         "different date",
+			index:        "audit",
+			partition:    3,
+			timeBucket:   time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC),
+			partFilename: "part-audit-L0-1.lsg",
+			want:         "parts/audit/t20251231/p3/part-audit-L0-1.lsg",
+		},
+		{
+			name:         "non-UTC time gets normalized",
+			index:        "logs",
+			partition:    0,
+			timeBucket:   time.Date(2026, 3, 9, 23, 0, 0, 0, time.FixedZone("EST", -5*60*60)),
+			partFilename: "part.lsg",
+			want:         "parts/logs/t20260310/p0/part.lsg", // 23:00 EST = 04:00 UTC next day
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := S3PartKey(tt.index, tt.partition, tt.timeBucket, tt.partFilename)
+			if got != tt.want {
+				t.Errorf("S3PartKey() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

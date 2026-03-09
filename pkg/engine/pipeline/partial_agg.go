@@ -31,6 +31,13 @@ type PartialAggGroup struct {
 	States []PartialAggState
 }
 
+// dcHLLThreshold is the cardinality at which dc() promotes from exact set
+// tracking to HyperLogLog approximation. Below this threshold, dc() uses
+// an exact map[string]bool. Above it, the set is converted to HLL (~0.8%
+// error) to bound memory usage for high-cardinality fields in distributed
+// partial aggregation.
+const dcHLLThreshold = 10_000
+
 // PartialAggState holds running state for one group's one function.
 // Fields are exported for serialization/deserialization by the MV subsystem.
 // Per-function state independence: each struct is indexed by position in
@@ -43,6 +50,9 @@ type PartialAggState struct {
 	Min         event.Value
 	Max         event.Value
 	DistinctSet map[string]bool
+	// DistinctHLL is used when the distinct set exceeds dcHLLThreshold.
+	// When non-nil, DistinctSet is nil and cardinality is approximate.
+	DistinctHLL *HyperLogLog
 }
 
 // IsPushableAgg returns true if the aggregation function can be decomposed
@@ -194,7 +204,7 @@ func MergePartialAggs(partials [][]*PartialAggGroup, spec *PartialAggSpec) []map
 					States: make([]PartialAggState, len(pg.States)),
 				}
 				copy(clone.States, pg.States)
-				// Deep-copy DistinctSet maps to avoid shared-map mutation
+				// Deep-copy DistinctSet maps and HLLs to avoid shared-state mutation
 				// when subsequent groups merge into this clone.
 				for j := range clone.States {
 					if pg.States[j].DistinctSet != nil {
@@ -202,6 +212,10 @@ func MergePartialAggs(partials [][]*PartialAggGroup, spec *PartialAggSpec) []map
 						for k := range pg.States[j].DistinctSet {
 							clone.States[j].DistinctSet[k] = true
 						}
+					}
+					if pg.States[j].DistinctHLL != nil {
+						data := pg.States[j].DistinctHLL.MarshalBinary()
+						clone.States[j].DistinctHLL = UnmarshalHyperLogLog(data)
 					}
 				}
 				merged[h] = append(chain, clone)
@@ -270,13 +284,17 @@ func MergePartialGroupsNoFinalize(groups []*PartialAggGroup, spec *PartialAggSpe
 				States: make([]PartialAggState, len(pg.States)),
 			}
 			copy(clone.States, pg.States)
-			// Deep-copy DistinctSet maps to avoid mutation of original.
+			// Deep-copy DistinctSet maps and HLLs to avoid mutation of original.
 			for j := range clone.States {
 				if pg.States[j].DistinctSet != nil {
 					clone.States[j].DistinctSet = make(map[string]bool, len(pg.States[j].DistinctSet))
 					for k := range pg.States[j].DistinctSet {
 						clone.States[j].DistinctSet[k] = true
 					}
+				}
+				if pg.States[j].DistinctHLL != nil {
+					data := pg.States[j].DistinctHLL.MarshalBinary()
+					clone.States[j].DistinctHLL = UnmarshalHyperLogLog(data)
 				}
 			}
 			merged[h] = append(chain, clone)
@@ -576,10 +594,24 @@ func updatePartialState(s *PartialAggState, fn string, val event.Value) {
 		}
 	case "dc":
 		if !val.IsNull() {
-			if s.DistinctSet == nil {
-				s.DistinctSet = make(map[string]bool)
+			str := val.String()
+			if s.DistinctHLL != nil {
+				// Already promoted to HLL.
+				s.DistinctHLL.Add(str)
+			} else {
+				if s.DistinctSet == nil {
+					s.DistinctSet = make(map[string]bool)
+				}
+				s.DistinctSet[str] = true
+				// Promote to HLL when exact set exceeds threshold.
+				if len(s.DistinctSet) >= dcHLLThreshold {
+					s.DistinctHLL = NewHyperLogLog()
+					for k := range s.DistinctSet {
+						s.DistinctHLL.Add(k)
+					}
+					s.DistinctSet = nil
+				}
 			}
-			s.DistinctSet[val.String()] = true
 		}
 	}
 }
@@ -608,12 +640,39 @@ func mergePartialState(dst, src *PartialAggState, fn string) {
 			}
 		}
 	case "dc":
-		if src.DistinctSet != nil {
+		// If either side uses HLL, promote both to HLL and merge.
+		if src.DistinctHLL != nil || dst.DistinctHLL != nil {
+			// Ensure dst has an HLL.
+			if dst.DistinctHLL == nil {
+				dst.DistinctHLL = NewHyperLogLog()
+				for k := range dst.DistinctSet {
+					dst.DistinctHLL.Add(k)
+				}
+				dst.DistinctSet = nil
+			}
+			// Merge src into dst's HLL.
+			if src.DistinctHLL != nil {
+				dst.DistinctHLL.Merge(src.DistinctHLL)
+			} else {
+				for k := range src.DistinctSet {
+					dst.DistinctHLL.Add(k)
+				}
+			}
+		} else if src.DistinctSet != nil {
+			// Both sides use exact sets — merge and check promotion.
 			if dst.DistinctSet == nil {
 				dst.DistinctSet = make(map[string]bool)
 			}
 			for k := range src.DistinctSet {
 				dst.DistinctSet[k] = true
+			}
+			// Promote to HLL if merged set exceeds threshold.
+			if len(dst.DistinctSet) >= dcHLLThreshold {
+				dst.DistinctHLL = NewHyperLogLog()
+				for k := range dst.DistinctSet {
+					dst.DistinctHLL.Add(k)
+				}
+				dst.DistinctSet = nil
 			}
 		}
 		// Accumulate count as upper-bound fallback for the backfill path
@@ -640,6 +699,9 @@ func finalizePartialState(s *PartialAggState, fn string) event.Value {
 	case aggMax:
 		return s.Max
 	case "dc":
+		if s.DistinctHLL != nil {
+			return event.IntValue(s.DistinctHLL.Count())
+		}
 		if len(s.DistinctSet) > 0 {
 			return event.IntValue(int64(len(s.DistinctSet)))
 		}

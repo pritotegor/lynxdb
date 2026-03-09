@@ -604,6 +604,12 @@ func (e *Engine) runQueryPipeline(
 	monitor *stats.BudgetMonitor,
 	queryID string,
 ) (*queryPipelineResult, error) {
+	// Distributed query path: if a cluster coordinator is configured,
+	// delegate to scatter-gather execution across the cluster.
+	if e.clusterCoordinator != nil {
+		return e.runDistributedPipeline(ctx, prog, hints, onProgress, scanStart)
+	}
+
 	if aggSpec != nil {
 		return e.runPartialAggPipeline(ctx, prog, hints, aggSpec, onProgress, scanStart)
 	}
@@ -618,6 +624,41 @@ func (e *Engine) runQueryPipeline(
 	}
 
 	return e.runStandardPipeline(ctx, prog, hints, params, onProgress, scanStart, monitor, queryID)
+}
+
+// runDistributedPipeline delegates query execution to the cluster coordinator
+// for scatter-gather execution across all relevant shards.
+func (e *Engine) runDistributedPipeline(
+	ctx context.Context,
+	prog *spl2.Program,
+	hints *spl2.QueryHints,
+	onProgress func(*SearchProgress),
+	scanStart time.Time,
+) (*queryPipelineResult, error) {
+	onProgress(&SearchProgress{Phase: PhaseScanningSegments})
+
+	result, err := e.clusterCoordinator.ExecuteQuery(ctx, prog, hints)
+	if err != nil {
+		return nil, err
+	}
+
+	qr := &queryPipelineResult{
+		scanMS:     result.ScanMS,
+		pipelineMS: result.MergeMS,
+	}
+
+	// Convert rows to ResultRows.
+	qr.rows = pipelineRowsToResultRows(result.Rows)
+
+	// Surface shard metadata as warnings.
+	if result.Meta.Partial {
+		qr.warnings = append(qr.warnings, result.Meta.Warnings...)
+		qr.warnings = append(qr.warnings, fmt.Sprintf(
+			"partial results: %d/%d shards succeeded",
+			result.Meta.ShardsSuccess, result.Meta.ShardsTotal))
+	}
+
+	return qr, nil
 }
 
 // runPartialAggPipeline handles the partial aggregation path.
@@ -937,7 +978,7 @@ func (e *Engine) runStreamingPipeline(
 	var ss storeStats
 	ss.SegmentsTotal = len(segs)
 	ss.BufferedEvents = len(memEvents)
-	sources := e.buildSegmentSources(segs, segFilterHints, &ss)
+	sources := e.buildSegmentSources(ctx, segs, segFilterHints, &ss)
 
 	// Build streaming hints from query hints.
 	// For multi-index queries, clear IndexName — GetEventIterator sets it per-call.

@@ -263,6 +263,13 @@ func searchStatsToMeta(ss *server.SearchStats) *metaStats {
 		})
 	}
 
+	// Distributed query shard metadata (cluster mode only).
+	ms.ShardsTotal = ss.ShardsTotal
+	ms.ShardsSuccess = ss.ShardsSuccess
+	ms.ShardsFailed = ss.ShardsFailed
+	ms.ShardsTimedOut = ss.ShardsTimedOut
+	ms.ShardsPartial = ss.ShardsPartial
+
 	return ms
 }
 

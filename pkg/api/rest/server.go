@@ -66,6 +66,7 @@ type Config struct {
 	Server        config.ServerConfig
 	Views         config.ViewsConfig
 	BufferManager config.BufferManagerConfig
+	Cluster       config.ClusterConfig
 }
 
 // NewServer creates a new LynxDB API server.
@@ -79,6 +80,7 @@ func NewServer(cfg Config) (*Server, error) {
 		Server:        cfg.Server,
 		Views:         cfg.Views,
 		BufferManager: cfg.BufferManager,
+		Cluster:       cfg.Cluster,
 	})
 
 	// Build planner, query service, and view service.

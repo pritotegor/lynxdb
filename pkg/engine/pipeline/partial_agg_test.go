@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -465,5 +466,217 @@ func TestMergePartialAggs_DistinctSetNotMutated(t *testing.T) {
 	}
 	if len(original.States[0].DistinctSet) != 2 {
 		t.Errorf("original DistinctSet: got %d entries, want 2", len(original.States[0].DistinctSet))
+	}
+}
+
+// --- HLL dc() tests ---
+
+func TestPartialAgg_DC_HLLPromotion(t *testing.T) {
+	// Generate enough events to trigger HLL promotion (> dcHLLThreshold = 10,000).
+	var fieldSets []map[string]event.Value
+	for i := 0; i < dcHLLThreshold+100; i++ {
+		fieldSets = append(fieldSets, map[string]event.Value{
+			"user": event.StringValue(fmt.Sprintf("user-%d", i)),
+		})
+	}
+	events := makePartialAggEvents(fieldSets...)
+
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "dc", Field: "user", Alias: "dc_user"}},
+	}
+	partials := ComputePartialAgg(events, spec)
+	if len(partials) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(partials))
+	}
+
+	g := partials[0]
+	// After promotion, DistinctSet should be nil and DistinctHLL should be set.
+	if g.States[0].DistinctSet != nil {
+		t.Error("expected DistinctSet to be nil after HLL promotion")
+	}
+	if g.States[0].DistinctHLL == nil {
+		t.Fatal("expected DistinctHLL to be non-nil after promotion")
+	}
+
+	// Finalize — should be within ~1% of exact count.
+	rows := MergePartialAggs([][]*PartialAggGroup{partials}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	got := rows[0]["dc_user"].AsInt()
+	expected := int64(dcHLLThreshold + 100)
+	errorPct := math.Abs(float64(got-expected)) / float64(expected) * 100
+	if errorPct > 2.0 {
+		t.Errorf("HLL dc() error too high: got %d, expected %d (%.2f%% error)", got, expected, errorPct)
+	}
+}
+
+func TestMergePartialAggs_DC_ExactPlusHLL(t *testing.T) {
+	// Cross-mode merge: one shard has exact set, other has HLL.
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "dc", Field: "user", Alias: "dc_user"}},
+	}
+
+	// Shard 1: exact set with 100 distinct values.
+	exactSet := make(map[string]bool, 100)
+	for i := 0; i < 100; i++ {
+		exactSet[fmt.Sprintf("user-%d", i)] = true
+	}
+	p1 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{{DistinctSet: exactSet}}},
+	}
+
+	// Shard 2: HLL with 15,000 distinct values.
+	hll := NewHyperLogLog()
+	for i := 0; i < 15000; i++ {
+		hll.Add(fmt.Sprintf("user-%d", i)) // first 100 overlap with shard 1
+	}
+	p2 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{{DistinctHLL: hll}}},
+	}
+
+	rows := MergePartialAggs([][]*PartialAggGroup{p1, p2}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	got := rows[0]["dc_user"].AsInt()
+	// The exact answer is 15,000 (100 from shard 1 are a subset of shard 2's 15,000).
+	// HLL estimate should be within ~2% of 15,000.
+	expected := int64(15000)
+	errorPct := math.Abs(float64(got-expected)) / float64(expected) * 100
+	if errorPct > 3.0 {
+		t.Errorf("cross-mode merge dc() error too high: got %d, expected %d (%.2f%% error)", got, expected, errorPct)
+	}
+}
+
+func TestMergePartialAggs_DC_HLLPlusHLL(t *testing.T) {
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "dc", Field: "user", Alias: "dc_user"}},
+	}
+
+	// Shard 1: HLL with users 0-9999.
+	hll1 := NewHyperLogLog()
+	for i := 0; i < 10000; i++ {
+		hll1.Add(fmt.Sprintf("user-%d", i))
+	}
+
+	// Shard 2: HLL with users 5000-14999 (50% overlap).
+	hll2 := NewHyperLogLog()
+	for i := 5000; i < 15000; i++ {
+		hll2.Add(fmt.Sprintf("user-%d", i))
+	}
+
+	p1 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{{DistinctHLL: hll1}}},
+	}
+	p2 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{{DistinctHLL: hll2}}},
+	}
+
+	rows := MergePartialAggs([][]*PartialAggGroup{p1, p2}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	got := rows[0]["dc_user"].AsInt()
+	// Exact: 15,000 unique users (0-14999).
+	expected := int64(15000)
+	errorPct := math.Abs(float64(got-expected)) / float64(expected) * 100
+	if errorPct > 3.0 {
+		t.Errorf("HLL+HLL merge dc() error too high: got %d, expected %d (%.2f%% error)", got, expected, errorPct)
+	}
+}
+
+func TestMergePartialAggs_DC_HLLNotMutated(t *testing.T) {
+	// Verify that merging doesn't mutate the original HLL.
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "dc", Field: "user", Alias: "dc_user"}},
+	}
+
+	hll := NewHyperLogLog()
+	for i := 0; i < 1000; i++ {
+		hll.Add(fmt.Sprintf("user-%d", i))
+	}
+	countBefore := hll.Count()
+
+	original := &PartialAggGroup{
+		Key:    map[string]event.Value{},
+		States: []PartialAggState{{DistinctHLL: hll}},
+	}
+	addition := &PartialAggGroup{
+		Key: map[string]event.Value{},
+		States: []PartialAggState{{
+			DistinctSet: map[string]bool{"extra-1": true, "extra-2": true},
+		}},
+	}
+
+	_ = MergePartialAggs([][]*PartialAggGroup{{original}, {addition}}, spec)
+
+	// Original HLL count should not change.
+	countAfter := hll.Count()
+	if countBefore != countAfter {
+		t.Errorf("original HLL was mutated: count before=%d, after=%d", countBefore, countAfter)
+	}
+}
+
+func TestPartialAgg_DC_BelowThreshold_Exact(t *testing.T) {
+	// Below threshold, dc should use exact counting.
+	var fieldSets []map[string]event.Value
+	for i := 0; i < 50; i++ {
+		fieldSets = append(fieldSets, map[string]event.Value{
+			"user": event.StringValue(fmt.Sprintf("user-%d", i%25)), // 25 distinct
+		})
+	}
+	events := makePartialAggEvents(fieldSets...)
+
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "dc", Field: "user", Alias: "dc_user"}},
+	}
+	partials := ComputePartialAgg(events, spec)
+	if len(partials) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(partials))
+	}
+
+	g := partials[0]
+	if g.States[0].DistinctHLL != nil {
+		t.Error("expected exact mode (no HLL) below threshold")
+	}
+	if len(g.States[0].DistinctSet) != 25 {
+		t.Errorf("expected 25 distinct values, got %d", len(g.States[0].DistinctSet))
+	}
+
+	rows := MergePartialAggs([][]*PartialAggGroup{partials}, spec)
+	assertIntField(t, rows[0], "dc_user", 25)
+}
+
+func TestPartialAgg_DC_HighCardinality_Accuracy(t *testing.T) {
+	// Accuracy test: 50K events with 20K distinct values.
+	// HLL should return within ~1% of 20,000.
+	distinctCount := 20_000
+	totalEvents := 50_000
+
+	var fieldSets []map[string]event.Value
+	for i := 0; i < totalEvents; i++ {
+		fieldSets = append(fieldSets, map[string]event.Value{
+			"user": event.StringValue(fmt.Sprintf("user-%d", i%distinctCount)),
+		})
+	}
+	events := makePartialAggEvents(fieldSets...)
+
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "dc", Field: "user", Alias: "dc_user"}},
+	}
+
+	partials := ComputePartialAgg(events, spec)
+	rows := MergePartialAggs([][]*PartialAggGroup{partials}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+
+	got := rows[0]["dc_user"].AsInt()
+	expected := int64(distinctCount)
+	errorPct := math.Abs(float64(got-expected)) / float64(expected) * 100
+	t.Logf("HLL accuracy: got=%d, expected=%d, error=%.2f%%", got, expected, errorPct)
+	if errorPct > 2.0 {
+		t.Errorf("HLL dc() error too high for 20K distinct values: %.2f%%", errorPct)
 	}
 }
