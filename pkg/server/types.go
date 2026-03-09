@@ -157,6 +157,13 @@ type SearchStats struct {
 	// Used by Prometheus to label query duration histograms.
 	ResultTypeLabel string `json:"-"`
 
+	// Distributed query shard metadata (populated only in cluster mode).
+	ShardsTotal    int  `json:"shards_total,omitempty"`
+	ShardsSuccess  int  `json:"shards_success,omitempty"`
+	ShardsFailed   int  `json:"shards_failed,omitempty"`
+	ShardsTimedOut int  `json:"shards_timed_out,omitempty"`
+	ShardsPartial  bool `json:"shards_partial,omitempty"`
+
 	// SlowQuery is true when the query exceeded the slow query threshold.
 	// Set before calling OnQueryComplete so Prometheus can increment the counter.
 	SlowQuery bool `json:"-"`

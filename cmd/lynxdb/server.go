@@ -30,6 +30,13 @@ var (
 	flagTLSKey       string
 	flagMaxQueryPool string
 	flagSpillDir     string
+
+	// Cluster flags.
+	flagClusterEnabled  bool
+	flagClusterNodeID   string
+	flagClusterRoles    string
+	flagClusterSeeds    string
+	flagClusterGRPCPort int
 )
 
 var serverCmd = &cobra.Command{
@@ -55,6 +62,13 @@ func init() {
 	serverCmd.Flags().StringVar(&flagMaxQueryPool, "max-query-pool", "", "Global query memory pool (e.g., 2gb, 4gb)")
 	serverCmd.Flags().StringVar(&flagSpillDir, "spill-dir", "", "Directory for temporary spill files (default: OS temp dir)")
 
+	// Cluster flags.
+	serverCmd.Flags().BoolVar(&flagClusterEnabled, "cluster.enabled", false, "Enable cluster mode")
+	serverCmd.Flags().StringVar(&flagClusterNodeID, "cluster.node-id", "", "Unique node identifier")
+	serverCmd.Flags().StringVar(&flagClusterRoles, "cluster.roles", "", "Node roles: meta,ingest,query (comma-separated)")
+	serverCmd.Flags().StringVar(&flagClusterSeeds, "cluster.seeds", "", "Seed node addresses (comma-separated host:port)")
+	serverCmd.Flags().IntVar(&flagClusterGRPCPort, "cluster.grpc-port", 0, "gRPC listen port for inter-node communication")
+
 	rootCmd.AddCommand(serverCmd)
 }
 
@@ -75,6 +89,28 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	if err := cfg.Validate(); err != nil {
 		return err
+	}
+
+	// Apply cluster CLI flag overrides.
+	if cmd.Flags().Changed("cluster.enabled") {
+		cfg.Cluster.Enabled = flagClusterEnabled
+		cliOverrides = append(cliOverrides, "--cluster.enabled")
+	}
+	if cmd.Flags().Changed("cluster.node-id") {
+		cfg.Cluster.NodeID = flagClusterNodeID
+		cliOverrides = append(cliOverrides, "--cluster.node-id")
+	}
+	if cmd.Flags().Changed("cluster.roles") {
+		cfg.Cluster.Roles = strings.Split(flagClusterRoles, ",")
+		cliOverrides = append(cliOverrides, "--cluster.roles")
+	}
+	if cmd.Flags().Changed("cluster.seeds") {
+		cfg.Cluster.Seeds = strings.Split(flagClusterSeeds, ",")
+		cliOverrides = append(cliOverrides, "--cluster.seeds")
+	}
+	if cmd.Flags().Changed("cluster.grpc-port") {
+		cfg.Cluster.GRPCPort = flagClusterGRPCPort
+		cliOverrides = append(cliOverrides, "--cluster.grpc-port")
 	}
 
 	if cmd.Flags().Changed("auth") {
@@ -133,6 +169,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		Server:        cfg.Server,
 		Views:         cfg.Views,
 		BufferManager: cfg.BufferManager,
+		Cluster:       cfg.Cluster,
 	})
 	if err != nil {
 		return fmt.Errorf("server init: %w", err)

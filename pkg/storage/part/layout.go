@@ -204,3 +204,29 @@ func Filename(index string, level int, ts time.Time) string {
 func ID(index string, level int, ts time.Time) string {
 	return fmt.Sprintf("part-%s-L%d-%d", index, level, ts.UnixNano())
 }
+
+// ShardPartDir returns the directory path for a shard's partition data.
+// Used in cluster mode where data is organized by hash partition within each
+// index's time partition.
+//
+// Directory hierarchy:
+//
+//	<dataDir>/segments/hot/<index>/p<partition>/<timePartition>/
+func (l *Layout) ShardPartDir(index string, partition uint32, t time.Time) string {
+	return filepath.Join(l.dataDir, "segments", "hot", index,
+		fmt.Sprintf("p%d", partition), l.PartitionKey(t))
+}
+
+// S3PartKey returns the S3 object key for a part file in cluster mode.
+// Format: parts/<index>/t<YYYYMMDD>/p<partition>/<partFilename>
+//
+// The time bucket is encoded as YYYYMMDD (UTC) to match the ShardID format
+// and provide a natural S3 prefix hierarchy for listing parts by time range.
+func S3PartKey(index string, partition uint32, timeBucket time.Time, partFilename string) string {
+	return fmt.Sprintf("parts/%s/t%s/p%d/%s",
+		index,
+		timeBucket.UTC().Format("20060102"),
+		partition,
+		partFilename,
+	)
+}

@@ -172,6 +172,13 @@ type metaStats struct {
 	// Suggestion is an actionable recommendation based on query execution analysis.
 	Suggestion string `json:"suggestion,omitempty"`
 
+	// Distributed query shard metadata (populated only in cluster mode).
+	ShardsTotal    int  `json:"shards_total,omitempty"`
+	ShardsSuccess  int  `json:"shards_success,omitempty"`
+	ShardsFailed   int  `json:"shards_failed,omitempty"`
+	ShardsTimedOut int  `json:"shards_timed_out,omitempty"`
+	ShardsPartial  bool `json:"shards_partial,omitempty"`
+
 	// Trace-level profiling (populated when profile=trace).
 	SegmentDetails []metaSegmentDetail `json:"segment_details,omitempty"`
 	VMCalls        int64               `json:"vm_calls,omitempty"`
