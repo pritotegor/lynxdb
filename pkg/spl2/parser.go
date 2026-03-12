@@ -2328,7 +2328,7 @@ func isIdentLike(t TokenType) bool {
 		TokenLet, TokenKeep, TokenOmit, TokenSelect, TokenGroup, TokenCompute,
 		TokenEvery, TokenBucket, TokenOrder, TokenTake, TokenRank, TokenTopby,
 		TokenBottomby, TokenBottom, TokenRunning, TokenEnrich, TokenParse,
-		TokenExplode, TokenPack, TokenLookup,
+		TokenExplode, TokenPack, TokenLookup, TokenIndex,
 		// Lynx Flow clause keywords.
 		TokenUsing, TokenExtract, TokenIfMissing, TokenPer, TokenOn,
 		TokenInto, TokenAsc, TokenDesc,
