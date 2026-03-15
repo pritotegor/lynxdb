@@ -433,7 +433,11 @@ export function SearchView(_props: Props) {
           active={tailActive.value}
           onToggle={handleTailToggle}
         />
-        <TimeRangePicker from={from} to={to} />
+        <TimeRangePicker from={from} to={to} onApply={() => {
+          if (!tailActive.value) {
+            runQueryAndRefresh(query.value.trim(), from.value, to.value);
+          }
+        }} />
       </div>
 
       <div class={styles.body}>
