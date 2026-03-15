@@ -7,16 +7,26 @@
   font-size: 0.8125rem;
 }
 
+.scrollContainer {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+
+/* ---- Header row ---- */
+
 .headerRow {
-  display: flex;
-  flex-direction: row;
-  flex-shrink: 0;
-  border-block-end: 1px solid var(--border);
+  display: grid;
+  position: sticky;
+  top: 0;
+  z-index: 3;
   background: var(--bg-secondary);
+  border-block-end: 1px solid var(--border);
+  min-width: max-content;
 }
 
 .headerCell {
-  flex: 0 0 auto;
+  position: relative;
   padding: 0.375rem 0.75rem;
   color: var(--text-secondary);
   font-weight: 600;
@@ -27,25 +37,65 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   user-select: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.viewport {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: auto;
-  position: relative;
+.headerCell:hover {
+  color: var(--text-primary);
 }
+
+.headerCellSticky {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: var(--bg-secondary);
+}
+
+/* ---- Sort indicator ---- */
+
+.sortIndicator {
+  color: var(--accent);
+  font-size: 0.5625rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* ---- Resize handle ---- */
+
+.resizeHandle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 5;
+  user-select: none;
+  touch-action: none;
+}
+
+.resizeHandle:hover,
+.resizeHandle.resizeActive {
+  border-right: 2px solid var(--accent);
+}
+
+/* ---- Scroll content (virtual scroll area) ---- */
 
 .scrollContent {
   position: relative;
+  min-width: max-content;
 }
 
+/* ---- Rows ---- */
+
 .row {
-  display: flex;
-  flex-direction: row;
+  display: grid;
   position: absolute;
-  inline-size: 100%;
-  block-size: 28px;
+  width: 100%;
+  height: 28px;
   align-items: center;
   cursor: pointer;
   transition: background-color 0.08s;
@@ -63,8 +113,18 @@
   background: rgba(79, 70, 229, 0.12);
 }
 
+/* ---- Wrap mode rows ---- */
+
+.rowWrap {
+  position: relative;
+  width: 100%;
+  min-height: 28px;
+  height: auto;
+}
+
+/* ---- Cells ---- */
+
 .cell {
-  flex: 0 0 auto;
   padding: 0 0.75rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -73,9 +133,43 @@
   line-height: 28px;
 }
 
+.cellSticky {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-primary);
+}
+
+.row:hover .cellSticky {
+  background: var(--bg-hover);
+}
+
+.rowSelected .cellSticky {
+  background: rgba(79, 70, 229, 0.08);
+}
+
+.rowSelected:hover .cellSticky {
+  background: rgba(79, 70, 229, 0.12);
+}
+
 .cellTime {
   color: var(--text-secondary);
 }
+
+.cellNumber {
+  text-align: right;
+}
+
+.cellWrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 28px;
+  line-height: 1.5;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* ---- Empty state ---- */
 
 .empty {
   display: flex;

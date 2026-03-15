@@ -1,22 +1,33 @@
-import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "preact/hooks";
+import { useRef, useState, useCallback, useLayoutEffect } from "preact/hooks";
 import type { QueryResult, EventsResult, AggregateResult } from "../api/client";
+import { updateSortInQuery, parseSortFromQuery } from "../utils/sortQuery";
 import styles from "./ResultsTable.module.css";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface ResultsTableProps {
   result: QueryResult | null;
   onRowClick: (row: Record<string, unknown>) => void;
   selectedRow: Record<string, unknown> | null;
+  onSort?: (newQuery: string) => void;
+  currentQuery?: string;
+  isAggregation?: boolean;
+  wrap?: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const ROW_HEIGHT = 28;
 const OVERSCAN = 5;
+const MIN_COL_WIDTH = 60;
 
-/** Column width heuristics: _time is narrower, _raw is wider */
-function columnWidth(name: string): number {
-  if (name === "_time") return 140;
-  if (name === "_raw" || name === "message") return 500;
-  return 180;
-}
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 /** Format an ISO timestamp to HH:mm:ss.SSS */
 function formatTime(value: unknown): string {
@@ -38,6 +49,11 @@ function formatTime(value: unknown): string {
 function truncate(value: unknown, maxLen = 200): string {
   const str = value == null ? "" : String(value);
   return str.length > maxLen ? str.slice(0, maxLen) + "\u2026" : str;
+}
+
+/** Check if a value is numeric */
+function isNumeric(value: unknown): boolean {
+  return typeof value === "number" || (typeof value === "string" && value !== "" && !isNaN(Number(value)));
 }
 
 /** Derive columns from events: _time first, then _raw, _source, source, then alphabetical */
@@ -68,9 +84,10 @@ function useTableData(result: QueryResult | null): {
   columns: string[];
   rowCount: number;
   getRow: (index: number) => Record<string, unknown>;
+  isAgg: boolean;
 } {
   if (!result) {
-    return { columns: [], rowCount: 0, getRow: () => ({}) };
+    return { columns: [], rowCount: 0, getRow: () => ({}), isAgg: false };
   }
 
   if (result.type === "events") {
@@ -80,6 +97,7 @@ function useTableData(result: QueryResult | null): {
       columns,
       rowCount: evts.length,
       getRow: (i: number) => evts[i] ?? {},
+      isAgg: false,
     };
   }
 
@@ -99,19 +117,39 @@ function useTableData(result: QueryResult | null): {
       }
       return row;
     },
+    isAgg: true,
   };
 }
 
-export function ResultsTable({ result, onRowClick, selectedRow }: ResultsTableProps) {
-  const viewportRef = useRef<HTMLDivElement>(null);
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+export function ResultsTable({
+  result,
+  onRowClick,
+  selectedRow,
+  onSort,
+  currentQuery,
+  isAggregation,
+  wrap = false,
+}: ResultsTableProps) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(600);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [resizingCol, setResizingCol] = useState<string | null>(null);
 
-  const { columns, rowCount, getRow } = useTableData(result);
+  const { columns, rowCount, getRow, isAgg } = useTableData(result);
 
-  // Track viewport height — useLayoutEffect ensures measurement before paint
+  const effectiveIsAgg = isAggregation ?? isAgg;
+
+  // Parse current sort state from query
+  const currentSort = currentQuery ? parseSortFromQuery(currentQuery) : null;
+
+  // Track viewport height via ResizeObserver
   useLayoutEffect(() => {
-    const el = viewportRef.current;
+    const el = scrollContainerRef.current;
     if (!el) return;
 
     const obs = new ResizeObserver((entries) => {
@@ -126,10 +164,82 @@ export function ResultsTable({ result, onRowClick, selectedRow }: ResultsTablePr
   }, []);
 
   const handleScroll = useCallback(() => {
-    if (viewportRef.current) {
-      setScrollTop(viewportRef.current.scrollTop);
+    if (scrollContainerRef.current) {
+      setScrollTop(scrollContainerRef.current.scrollTop);
     }
   }, []);
+
+  // ---- Column resize handlers ----
+
+  const handleResizeStart = useCallback(
+    (e: PointerEvent, colName: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const target = e.currentTarget as HTMLElement;
+      target.setPointerCapture(e.pointerId);
+
+      const startX = e.clientX;
+      // Get the actual rendered width of the column header cell
+      const headerCell = target.parentElement;
+      const startWidth = columnWidths[colName] || headerCell?.offsetWidth || 180;
+
+      setResizingCol(colName);
+
+      const onMove = (me: PointerEvent) => {
+        const delta = me.clientX - startX;
+        const newWidth = Math.max(MIN_COL_WIDTH, startWidth + delta);
+        setColumnWidths((prev) => ({ ...prev, [colName]: newWidth }));
+      };
+
+      const onUp = () => {
+        setResizingCol(null);
+        target.removeEventListener("pointermove", onMove as EventListener);
+        target.removeEventListener("pointerup", onUp);
+      };
+
+      target.addEventListener("pointermove", onMove as EventListener);
+      target.addEventListener("pointerup", onUp);
+    },
+    [columnWidths],
+  );
+
+  const handleResizeDblClick = useCallback(
+    (e: MouseEvent, colName: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Remove stored width to reset to auto-fit (max-content)
+      setColumnWidths((prev) => {
+        const next = { ...prev };
+        delete next[colName];
+        return next;
+      });
+    },
+    [],
+  );
+
+  // ---- Sort handler ----
+
+  const handleHeaderClick = useCallback(
+    (colName: string) => {
+      if (!onSort || !currentQuery) return;
+
+      let newDirection: "asc" | "desc" | null;
+      if (!currentSort || currentSort.field !== colName) {
+        newDirection = "asc";
+      } else if (currentSort.direction === "asc") {
+        newDirection = "desc";
+      } else {
+        newDirection = null;
+      }
+
+      const newQuery = updateSortInQuery(currentQuery, colName, newDirection);
+      onSort(newQuery);
+    },
+    [onSort, currentQuery, currentSort],
+  );
+
+  // ---- Early returns ----
 
   if (!result) {
     return <div class={styles.empty}>No results</div>;
@@ -139,25 +249,68 @@ export function ResultsTable({ result, onRowClick, selectedRow }: ResultsTablePr
     return <div class={styles.empty}>Query returned no results</div>;
   }
 
-  // Virtual scroll calculations
-  const totalHeight = rowCount * ROW_HEIGHT;
-  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-  const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
-  const endIndex = Math.min(rowCount, startIndex + visibleCount);
+  // ---- Grid template ----
 
-  const totalWidth = columns.reduce((sum, col) => sum + columnWidth(col), 0);
+  // Build grid-template-columns: stored width in px, or minmax(80px, max-content) for auto
+  const gridTemplate = columns
+    .map((col) => {
+      const stored = columnWidths[col];
+      if (stored != null) return `${stored}px`;
+      // Default auto-fit widths
+      if (col === "_time") return "minmax(80px, max-content)";
+      if (col === "_raw" || col === "message") return "minmax(200px, max-content)";
+      return "minmax(80px, max-content)";
+    })
+    .join(" ");
+
+  const gridStyle = { gridTemplateColumns: gridTemplate };
+
+  // ---- Determine if _time is sticky ----
+  const hasTimeCol = !effectiveIsAgg && columns.includes("_time");
+
+  // ---- Virtual scroll calculations ----
+  const useVirtualScroll = !wrap;
+  const totalHeight = rowCount * ROW_HEIGHT;
+
+  let startIndex: number;
+  let endIndex: number;
+
+  if (useVirtualScroll) {
+    startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+    const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
+    endIndex = Math.min(rowCount, startIndex + visibleCount);
+  } else {
+    startIndex = 0;
+    endIndex = rowCount;
+  }
+
+  // ---- Render rows ----
 
   const visibleRows = [];
   for (let i = startIndex; i < endIndex; i++) {
     const row = getRow(i);
-    const isSelected = selectedRow === row || (selectedRow !== null && selectedRow._time === row._time && selectedRow._raw === row._raw);
-    const yOffset = i * ROW_HEIGHT;
+    const isSelected =
+      selectedRow === row ||
+      (selectedRow !== null &&
+        selectedRow._time === row._time &&
+        selectedRow._raw === row._raw);
+
+    const rowClasses = [
+      useVirtualScroll ? styles.row : styles.rowWrap,
+      isSelected ? styles.rowSelected : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const rowStyle = useVirtualScroll
+      ? { ...gridStyle, transform: `translateY(${i * ROW_HEIGHT}px)` }
+      : gridStyle;
 
     visibleRows.push(
       <div
         key={i}
-        class={`${styles.row} ${isSelected ? styles.rowSelected : ""}`}
-        style={{ transform: `translateY(${yOffset}px)` }}
+        class={rowClasses}
+        style={rowStyle}
         onClick={() => onRowClick(row)}
         role="row"
         aria-rowindex={i + 1}
@@ -168,44 +321,74 @@ export function ResultsTable({ result, onRowClick, selectedRow }: ResultsTablePr
           const display = isTime ? formatTime(raw) : truncate(raw);
           const fullValue = raw == null ? "" : String(raw);
 
+          const cellClasses = [
+            styles.cell,
+            isTime ? styles.cellTime : "",
+            hasTimeCol && isTime ? styles.cellSticky : "",
+            effectiveIsAgg && isNumeric(raw) ? styles.cellNumber : "",
+            wrap ? styles.cellWrap : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+
           return (
             <div
               key={col}
-              class={`${styles.cell} ${isTime ? styles.cellTime : ""}`}
-              style={{ width: columnWidth(col) }}
+              class={cellClasses}
               title={fullValue}
               role="cell"
             >
-              {display}
+              {wrap ? fullValue : display}
             </div>
           );
         })}
-      </div>
+      </div>,
     );
   }
 
+  // ---- Render ----
+
   return (
     <div class={styles.wrapper} role="table" aria-label="Query results">
-      <div class={styles.headerRow} role="row" style={{ minWidth: totalWidth }}>
-        {columns.map((col) => (
-          <div
-            key={col}
-            class={styles.headerCell}
-            style={{ width: columnWidth(col) }}
-            role="columnheader"
-          >
-            {col}
-          </div>
-        ))}
-      </div>
-      <div
-        ref={viewportRef}
-        class={styles.viewport}
-        onScroll={handleScroll}
-      >
+      <div class={styles.scrollContainer} ref={scrollContainerRef} onScroll={handleScroll}>
+        {/* Header row inside scroll container for sticky top:0 */}
+        <div class={styles.headerRow} style={gridStyle} role="row">
+          {columns.map((col) => {
+            const isSorted = currentSort?.field === col;
+            const cellClasses = [
+              styles.headerCell,
+              hasTimeCol && col === "_time" ? styles.headerCellSticky : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+
+            return (
+              <div
+                key={col}
+                class={cellClasses}
+                role="columnheader"
+                onClick={() => handleHeaderClick(col)}
+              >
+                <span>{col}</span>
+                {isSorted && (
+                  <span class={styles.sortIndicator}>
+                    {currentSort!.direction === "asc" ? "\u25B2" : "\u25BC"}
+                  </span>
+                )}
+                <div
+                  class={`${styles.resizeHandle} ${resizingCol === col ? styles.resizeActive : ""}`}
+                  onPointerDown={(e: PointerEvent) => handleResizeStart(e, col)}
+                  onDblClick={(e: MouseEvent) => handleResizeDblClick(e, col)}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Scroll content area */}
         <div
           class={styles.scrollContent}
-          style={{ height: totalHeight, minWidth: totalWidth }}
+          style={useVirtualScroll ? { height: totalHeight } : undefined}
         >
           {visibleRows}
         </div>
