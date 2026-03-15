@@ -171,6 +171,35 @@ export async function fetchHistogram(
   return json.data;
 }
 
+export interface HistogramBucketGrouped {
+  time: string;
+  counts: Record<string, number>;
+}
+
+export interface HistogramResultGrouped {
+  interval: string;
+  buckets: HistogramBucketGrouped[];
+  total: number;
+}
+
+export async function fetchHistogramGrouped(
+  from?: string,
+  to?: string,
+  buckets = 60,
+  groupBy = "level",
+): Promise<HistogramResultGrouped> {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  params.set("buckets", String(buckets));
+  params.set("group_by", groupBy);
+
+  const resp = await apiFetch(`${BASE}/api/v1/histogram?${params}`);
+  if (!resp.ok) throw new Error("Failed to fetch grouped histogram");
+  const json = await resp.json();
+  return json.data;
+}
+
 export async function fetchStatus(): Promise<Record<string, unknown>> {
   const resp = await apiFetch(`${BASE}/api/v1/status`);
   if (!resp.ok) throw new Error("Failed to fetch status");

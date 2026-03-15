@@ -1,9 +1,13 @@
+.wrapper {
+  flex-shrink: 0;
+  border-block-end: 1px solid var(--border);
+}
+
 .container {
   inline-size: 100%;
   block-size: 80px;
   flex-shrink: 0;
   background: var(--bg-primary);
-  border-block-end: 1px solid var(--border);
   position: relative;
   overflow: hidden;
 }
@@ -21,7 +25,7 @@
 /*
  * uPlot dark theme overrides.
  * uPlot ships a light theme by default; these rules adapt it
- * to the LynxDB dark palette without using !important —
+ * to the LynxDB dark palette without using !important --
  * the selector specificity here is sufficient because we scope
  * to .chart descendants.
  */
@@ -62,7 +66,6 @@
 .tooltipCount {
   color: var(--accent);
   font-weight: 600;
-  margin-inline-start: 0.375rem;
 }
 
 /* uPlot's built-in select box provides the brush overlay.
@@ -73,8 +76,54 @@
   opacity: 0.12;
 }
 
+/* Inline legend below chart */
+.legend {
+  display: flex;
+  gap: 12px;
+  padding: 2px 0 4px 40px;
+  font-size: 0.6875rem;
+  background: var(--bg-primary);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.legendDot {
+  display: inline-block;
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Reset button */
+.resetBtn {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  z-index: 5;
+  padding: 2px 8px;
+  font-size: 0.625rem;
+  font-family: var(--font-mono);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.resetBtn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
 @media (max-width: 768px) {
-  .container {
+  .wrapper {
     display: none;
   }
 }

@@ -17,6 +17,7 @@ import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import {
   executeQuery,
   fetchHistogram,
+  fetchHistogramGrouped,
   fetchIndexes,
   fetchViews,
   fetchExplain,
@@ -43,6 +44,7 @@ import type {
   ViewSummary,
   ExplainResult,
   HistogramBucket,
+  HistogramBucketGrouped,
   FieldInfo,
 } from "../api/client";
 import type { TailEvent } from "../api/sse";
@@ -64,6 +66,9 @@ const selectedEvent = signal<Record<string, unknown> | null>(null);
 /* --- Part 3 signals --- */
 const sidebarVisible = signal(true);
 const timelineBuckets = signal<HistogramBucket[]>([]);
+const groupedBuckets = signal<HistogramBucketGrouped[]>([]);
+/** Track whether user has brush-zoomed on the histogram */
+const histogramBrushed = signal(false);
 /** Track whether at least one query has been executed (controls timeline visibility) */
 const hasQueried = signal(false);
 
@@ -179,12 +184,22 @@ function runQueryAndRefresh(
       const view = getEditorView?.();
       if (view) clearEditorDiagnostics(view);
 
-      // Fetch histogram and explain in parallel after query succeeds.
-      // These are non-blocking -- failures are silently ignored so
-      // the primary query result is never held back.
-      fetchHistogram(fromVal, toVal, 60)
-        .then((histResult) => { timelineBuckets.value = histResult.buckets; })
-        .catch(() => { /* non-critical */ });
+      // Fetch grouped histogram (with ungrouped fallback) and explain in
+      // parallel after query succeeds. Non-blocking -- failures ignored.
+      fetchHistogramGrouped(fromVal, toVal, 60, "level")
+        .then((histResult) => {
+          groupedBuckets.value = histResult.buckets;
+          timelineBuckets.value = [];
+        })
+        .catch(() => {
+          // Fallback to ungrouped histogram
+          fetchHistogram(fromVal, toVal, 60)
+            .then((histResult) => {
+              timelineBuckets.value = histResult.buckets;
+              groupedBuckets.value = [];
+            })
+            .catch(() => { /* non-critical */ });
+        });
 
       fetchExplain(q, fromVal, toVal)
         .then((explain) => { explainResult.value = explain; })
@@ -328,7 +343,16 @@ export function SearchView(_props: Props) {
     // Convert epoch seconds to ISO strings for the time range
     from.value = new Date(fromTs * 1000).toISOString();
     to.value = new Date(toTs * 1000).toISOString();
+    histogramBrushed.value = true;
 
+    page.value = 1;
+    runQueryAndRefresh(query.value.trim(), from.value, to.value, 1, pageSize.value);
+  }, []);
+
+  const handleHistogramReset = useCallback(() => {
+    from.value = "-1h";
+    to.value = undefined;
+    histogramBrushed.value = false;
     page.value = 1;
     runQueryAndRefresh(query.value.trim(), from.value, to.value, 1, pageSize.value);
   }, []);
@@ -654,6 +678,7 @@ export function SearchView(_props: Props) {
         />
         <TimeRangePicker from={from} to={to} onApply={() => {
           if (!tailActive.value) {
+            histogramBrushed.value = false; // Reset brush state on manual time change
             page.value = 1; // Reset to page 1 on time range change
             runQueryAndRefresh(query.value.trim(), from.value, to.value, 1, pageSize.value);
           }
@@ -680,8 +705,11 @@ export function SearchView(_props: Props) {
             from={from.value}
             to={to.value}
             buckets={timelineBuckets.value}
+            groupedBuckets={groupedBuckets.value}
             visible={hasQueried.value && !tailActive.value}
             onBrush={handleTimelineBrush}
+            onReset={handleHistogramReset}
+            showReset={histogramBrushed.value}
           />
 
           <QueryStatsBar
