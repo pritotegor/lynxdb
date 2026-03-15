@@ -91,6 +91,19 @@ export const lynxTheme = EditorView.theme({
   ".cm-completionIcon-function::after": { backgroundColor: "#7c3aed" },   // purple -- functions
   ".cm-completionIcon-text::after": { backgroundColor: "#6b7280" },       // gray -- values
   ".cm-completionIcon-variable::after": { backgroundColor: "#2563eb" },   // blue -- indexes
+  /* Diagnostic (lint) styling for syntax error underlines and tooltips */
+  ".cm-diagnostic-error": {
+    borderBottom: "2px solid #ef4444",
+    paddingBottom: "1px",
+  },
+  ".cm-tooltip-lint": {
+    backgroundColor: "var(--bg-primary)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius)",
+    padding: "4px 8px",
+    fontSize: "13px",
+    color: "var(--text-primary)",
+  },
 }, { dark: false });
 
 export const lynxHighlighting = syntaxHighlighting(HighlightStyle.define([

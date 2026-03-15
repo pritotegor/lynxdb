@@ -19,6 +19,9 @@ import {
   fetchFields,
 } from "../api/client";
 import { startTail } from "../api/sse";
+import { pushHistory } from "../stores/queryHistory";
+import { writeQueryToHash, readQueryFromHash } from "../stores/queryUrl";
+import { dispatchDiagnostics, clearEditorDiagnostics } from "../editor/diagnostics";
 import type {
   QueryResult,
   QueryStats,
@@ -65,6 +68,12 @@ const tailCatchupDone = signal(false);
 /** Maximum events to keep in the live tail buffer */
 const TAIL_BUFFER_CAP = 10_000;
 
+/** Module-level getter for the current EditorView -- set by the component */
+let getEditorView: (() => import("@codemirror/view").EditorView | null) | null = null;
+
+/** Debounce timer for live explain diagnostics */
+let explainDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+
 function resultCount(r: QueryResult | null): number {
   if (!r) return 0;
   if (r.type === "events") return r.events.length;
@@ -91,6 +100,14 @@ function runQueryAndRefresh(q: string, fromVal: string, toVal: string | undefine
       stats.value = resp.stats;
       hasQueried.value = true;
 
+      // Save to history and update URL hash on successful execution
+      pushHistory(q);
+      writeQueryToHash(q, fromVal, toVal);
+
+      // Clear diagnostics on successful query
+      const view = getEditorView?.();
+      if (view) clearEditorDiagnostics(view);
+
       // Fetch histogram and explain in parallel after query succeeds.
       // These are non-blocking -- failures are silently ignored so
       // the primary query result is never held back.
@@ -105,6 +122,18 @@ function runQueryAndRefresh(q: string, fromVal: string, toVal: string | undefine
     .catch((err: unknown) => {
       const message = err instanceof Error ? err.message : "Unknown error";
       error.value = message;
+
+      // On failure, fetch explain to show diagnostics in the editor
+      const view = getEditorView?.();
+      if (view) {
+        fetchExplain(q, fromVal, toVal)
+          .then((explain) => {
+            if (!explain.is_valid) {
+              dispatchDiagnostics(view, q, explain);
+            }
+          })
+          .catch(() => { /* non-critical */ });
+      }
     })
     .finally(() => {
       loading.value = false;
@@ -150,8 +179,33 @@ export function SearchView(_props: Props) {
   /** Tracks whether auto-scroll is paused (user scrolled away from top) */
   const autoScrollPaused = useRef(false);
 
+  // Set up module-level editor view getter so runQueryAndRefresh can access it
+  getEditorView = () => editorHandleRef.current?.getView() ?? null;
+
   const handleQueryChange = useCallback((value: string) => {
     query.value = value;
+
+    // Debounced explain for live inline diagnostics (500ms after typing stops)
+    clearTimeout(explainDebounceTimer);
+    if (value.trim()) {
+      explainDebounceTimer = setTimeout(() => {
+        const view = getEditorView?.();
+        if (!view) return;
+        fetchExplain(value, from.value, to.value)
+          .then((explain) => {
+            if (!explain.is_valid) {
+              dispatchDiagnostics(view, value, explain);
+            } else {
+              clearEditorDiagnostics(view);
+            }
+          })
+          .catch(() => { /* non-critical */ });
+      }, 500);
+    } else {
+      // Clear diagnostics when query is empty
+      const view = getEditorView?.();
+      if (view) clearEditorDiagnostics(view);
+    }
   }, []);
 
   const handleExecute = useCallback(() => {
@@ -326,6 +380,20 @@ export function SearchView(_props: Props) {
           fieldTypeMap.value = m;
         }
       });
+  }, []);
+
+  // Restore query and time range from URL hash on mount (Pitfall 4: defer execution)
+  useEffect(() => {
+    const hashData = readQueryFromHash();
+    if (hashData) {
+      query.value = hashData.q;
+      from.value = hashData.from || "-1h";
+      to.value = hashData.to;
+      // Defer execution to ensure editor has rendered
+      setTimeout(() => {
+        runQueryAndRefresh(hashData.q, from.value, to.value);
+      }, 0);
+    }
   }, []);
 
   // Build an EventsResult from live tail events for ResultsTable

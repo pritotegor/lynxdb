@@ -3,9 +3,11 @@ import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, placeholder, lineNumbers } from "@codemirror/view";
 import { defaultKeymap } from "@codemirror/commands";
 import { acceptCompletion, completionStatus } from "@codemirror/autocomplete";
+import { linter } from "@codemirror/lint";
 import { lynxflowLanguage } from "./lynxflow-lang";
 import { lynxTheme, lynxHighlighting } from "./theme";
 import { lynxflowAutocompletion } from "./autocomplete";
+import { navigateHistory, resetHistoryNavigation } from "../stores/queryHistory";
 import styles from "./QueryEditor.module.css";
 
 interface QueryEditorProps {
@@ -18,6 +20,7 @@ interface QueryEditorProps {
 
 export interface QueryEditorHandle {
   focus: () => void;
+  getView: () => EditorView | null;
 }
 
 // Compartment for dynamically toggling line numbers based on line count
@@ -36,6 +39,8 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
   const hasLineNumbersRef = useRef(false);
   // Track the height at drag start for computing delta
   const dragStartHeightRef = useRef<number>(0);
+  // Track whether a doc change is from history navigation to avoid resetting historyIndex
+  const isHistoryNavigationRef = useRef(false);
 
   // Keep callback refs current without recreating the editor
   onChangeRef.current = onChange;
@@ -69,12 +74,51 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
             return true;
           },
         }]),
+        // Ctrl+Up/Down for query history navigation
+        keymap.of([
+          {
+            key: "Ctrl-ArrowUp",
+            run: (view) => {
+              const result = navigateHistory("up", view.state.doc.toString());
+              if (result !== null) {
+                isHistoryNavigationRef.current = true;
+                view.dispatch({
+                  changes: { from: 0, to: view.state.doc.length, insert: result },
+                });
+                isHistoryNavigationRef.current = false;
+              }
+              return true;
+            },
+          },
+          {
+            key: "Ctrl-ArrowDown",
+            run: (view) => {
+              const result = navigateHistory("down", view.state.doc.toString());
+              if (result !== null) {
+                isHistoryNavigationRef.current = true;
+                view.dispatch({
+                  changes: { from: 0, to: view.state.doc.length, insert: result },
+                });
+                isHistoryNavigationRef.current = false;
+              }
+              return true;
+            },
+          },
+        ]),
+        // No-op linter sets up diagnostic display infrastructure (Pitfall 6).
+        // Actual diagnostics are dispatched via setDiagnostics from the parent.
+        linter(() => [], { delay: 0 }),
         placeholder('from main | where level="error" | group by _source compute count()'),
         // Dynamic line numbers via Compartment: starts with no line numbers (single line)
         lineNumberCompartment.of([]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             onChangeRef.current(update.state.doc.toString());
+
+            // Reset history navigation when user manually edits (not via Ctrl+Up/Down)
+            if (!isHistoryNavigationRef.current) {
+              resetHistoryNavigation();
+            }
 
             // Toggle line numbers based on line count (Pitfall 1: guard with comparison)
             const lineCount = update.state.doc.lines;
@@ -126,6 +170,7 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
     if (editorRef) {
       editorRef({
         focus: () => view.focus(),
+        getView: () => viewRef.current,
       });
     }
 
