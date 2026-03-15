@@ -102,6 +102,93 @@ func (e *Engine) HistogramFromMetadata(ctx context.Context, indexName string,
 	return total, nil
 }
 
+// HistogramByFieldFromMetadata computes histogram buckets grouped by a field
+// value. Unlike the ungrouped fast path, every segment is scanned using
+// ReadEventsWithColumns to extract both the timestamp and the grouping field.
+// Events without a value for the field are counted under "other".
+func (e *Engine) HistogramByFieldFromMetadata(ctx context.Context, indexName string,
+	from, to time.Time, interval time.Duration, fieldName string, bucketCount int) ([]GroupedHistogramBucket, int, error) {
+	ep := e.pinEpoch()
+	defer ep.unpin()
+	segs := make([]*segmentHandle, len(ep.segments))
+	copy(segs, ep.segments)
+
+	if bucketCount <= 0 || interval <= 0 {
+		return nil, 0, nil
+	}
+
+	fromNs := from.UnixNano()
+	intervalNs := interval.Nanoseconds()
+	total := 0
+
+	// Pre-allocate bucket slice with empty counts maps.
+	buckets := make([]GroupedHistogramBucket, bucketCount)
+	for i := 0; i < bucketCount; i++ {
+		buckets[i] = GroupedHistogramBucket{
+			Time:   from.Add(time.Duration(i) * interval),
+			Counts: make(map[string]int),
+		}
+	}
+
+	for _, seg := range segs {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+
+		// Skip by index name.
+		if indexName != "" && seg.index != indexName {
+			continue
+		}
+
+		// Skip segments outside the time range entirely.
+		if seg.meta.MaxTime.Before(from) || seg.meta.MinTime.After(to) {
+			continue
+		}
+
+		reader := seg.reader
+		if reader == nil {
+			reader = e.loadRemoteSegment(ctx, seg)
+		}
+		if reader == nil {
+			continue
+		}
+
+		events, err := reader.ReadEventsWithColumns([]string{fieldName})
+		if err != nil {
+			continue
+		}
+
+		for i, ev := range events {
+			if i&0x3FFF == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, 0, err
+				}
+			}
+
+			if ev.Time.Before(from) || ev.Time.After(to) {
+				continue
+			}
+
+			idx := int((ev.Time.UnixNano() - fromNs) / intervalNs)
+			if idx < 0 {
+				idx = 0
+			}
+			if idx >= bucketCount {
+				idx = bucketCount - 1
+			}
+
+			val := extractFieldValue(ev, fieldName)
+			if val == "" {
+				val = "other"
+			}
+			buckets[idx].Counts[val]++
+			total++
+		}
+	}
+
+	return buckets, total, nil
+}
+
 // FieldValuesFromMetadata returns top values for a field, scanning events with
 // context cancellation support. Uses time bounds to limit the scan.
 func (e *Engine) FieldValuesFromMetadata(ctx context.Context, fieldName string, indexName string,

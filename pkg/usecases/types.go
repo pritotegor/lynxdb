@@ -144,6 +144,7 @@ type HistogramRequest struct {
 	To      string
 	Buckets int
 	Index   string
+	GroupBy string // optional: field to group counts by (e.g. "level")
 }
 
 // HistogramBucket is a single histogram time bucket.
@@ -156,6 +157,19 @@ type HistogramBucket struct {
 type HistogramResult struct {
 	Interval string
 	Buckets  []HistogramBucket
+	Total    int
+}
+
+// GroupedHistogramBucket is a single histogram time bucket with counts broken down by a field value.
+type GroupedHistogramBucket struct {
+	Time   time.Time
+	Counts map[string]int
+}
+
+// GroupedHistogramResult is the domain output for grouped histogram.
+type GroupedHistogramResult struct {
+	Interval string
+	Buckets  []GroupedHistogramBucket
 	Total    int
 }
 

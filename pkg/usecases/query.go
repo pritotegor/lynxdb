@@ -922,6 +922,63 @@ func (s *QueryService) Histogram(ctx context.Context, req HistogramRequest) (*Hi
 	}, nil
 }
 
+// GroupedHistogram computes event count buckets grouped by a field value.
+// Uses ReadEventsWithColumns to extract both timestamps and the grouping field.
+func (s *QueryService) GroupedHistogram(ctx context.Context, req HistogramRequest) (*GroupedHistogramResult, error) {
+	now := time.Now()
+	fromStr := req.From
+	if fromStr == "" {
+		fromStr = "-1h"
+	}
+	toStr := req.To
+	if toStr == "" {
+		toStr = "now"
+	}
+
+	fromTime, err := ParseTimeParam(fromStr, now)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidFrom, err)
+	}
+	toTime, err := ParseTimeParam(toStr, now)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidTo, err)
+	}
+
+	bucketCount := req.Buckets
+	if bucketCount <= 0 {
+		bucketCount = 60
+	}
+
+	totalDuration := toTime.Sub(fromTime)
+	if totalDuration <= 0 {
+		return nil, ErrFromBeforeTo
+	}
+	intervalNs := totalDuration.Nanoseconds() / int64(bucketCount)
+	interval := SnapInterval(time.Duration(intervalNs))
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	srvBuckets, total, err := s.engine.HistogramByFieldFromMetadata(
+		ctx, req.Index, fromTime, toTime, interval, req.GroupBy, bucketCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	buckets := make([]GroupedHistogramBucket, len(srvBuckets))
+	for i, b := range srvBuckets {
+		buckets[i] = GroupedHistogramBucket{Time: b.Time, Counts: b.Counts}
+	}
+
+	return &GroupedHistogramResult{
+		Interval: interval.String(),
+		Buckets:  buckets,
+		Total:    total,
+	}, nil
+}
+
 // FieldValues returns the top values for a given field name.
 // Uses streaming scan with context cancellation instead of loading all events.
 func (s *QueryService) FieldValues(ctx context.Context, req FieldValuesRequest) (*FieldValuesResult, error) {

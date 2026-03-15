@@ -27,6 +27,10 @@ type QueryEngine interface {
 	HistogramFromMetadata(ctx context.Context, indexName string,
 		from, to time.Time, interval time.Duration, buckets []server.HistogramBucket) (total int, err error)
 
+	// HistogramByFieldFromMetadata computes histogram buckets grouped by a field value.
+	HistogramByFieldFromMetadata(ctx context.Context, indexName string,
+		from, to time.Time, interval time.Duration, fieldName string, bucketCount int) ([]server.GroupedHistogramBucket, int, error)
+
 	// FieldValuesFromMetadata returns top field values using streaming scan with context cancellation.
 	FieldValuesFromMetadata(ctx context.Context, fieldName string, indexName string,
 		from, to time.Time, limit int) (*server.FieldValuesResult, error)
