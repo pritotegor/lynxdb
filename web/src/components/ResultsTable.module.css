@@ -49,7 +49,7 @@
 
 .headerCellSticky {
   position: sticky;
-  left: 0;
+  left: 24px;
   z-index: 4;
   background: var(--bg-secondary);
 }
@@ -122,10 +122,30 @@
   height: auto;
 }
 
+/* ---- Gutter (expand chevron) ---- */
+
+.gutterHeader {
+  /* Empty header cell for gutter column */
+}
+
+.gutter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.1s;
+}
+
+.gutter:hover {
+  color: var(--accent);
+}
+
 /* ---- Cells ---- */
 
 .cell {
   padding: 0 0.75rem;
+  cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -135,7 +155,7 @@
 
 .cellSticky {
   position: sticky;
-  left: 0;
+  left: 24px;
   z-index: 1;
   background: var(--bg-primary);
 }
@@ -150,6 +170,10 @@
 
 .rowSelected:hover .cellSticky {
   background: rgba(79, 70, 229, 0.12);
+}
+
+.cell:hover {
+  background: var(--bg-tertiary);
 }
 
 .cellTime {

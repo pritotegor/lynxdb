@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useLayoutEffect } from "preact/hooks";
+import { ChevronRight } from "lucide-preact";
 import type { QueryResult, EventsResult, AggregateResult } from "../api/client";
 import { updateSortInQuery, parseSortFromQuery } from "../utils/sortQuery";
 import styles from "./ResultsTable.module.css";
@@ -15,6 +16,7 @@ interface ResultsTableProps {
   currentQuery?: string;
   isAggregation?: boolean;
   wrap?: boolean;
+  onCellCopy?: (value: string, x: number, y: number) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +135,7 @@ export function ResultsTable({
   currentQuery,
   isAggregation,
   wrap = false,
+  onCellCopy,
 }: ResultsTableProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -251,8 +254,8 @@ export function ResultsTable({
 
   // ---- Grid template ----
 
-  // Build grid-template-columns: stored width in px, or minmax(80px, max-content) for auto
-  const gridTemplate = columns
+  // Build grid-template-columns: gutter + data columns
+  const dataColTemplate = columns
     .map((col) => {
       const stored = columnWidths[col];
       if (stored != null) return `${stored}px`;
@@ -263,6 +266,7 @@ export function ResultsTable({
     })
     .join(" ");
 
+  const gridTemplate = `24px ${dataColTemplate}`;
   const gridStyle = { gridTemplateColumns: gridTemplate };
 
   // ---- Determine if _time is sticky ----
@@ -311,10 +315,16 @@ export function ResultsTable({
         key={i}
         class={rowClasses}
         style={rowStyle}
-        onClick={() => onRowClick(row)}
         role="row"
         aria-rowindex={i + 1}
       >
+        <div
+          class={styles.gutter}
+          onClick={(e: MouseEvent) => { e.stopPropagation(); onRowClick(row); }}
+          title="Expand event"
+        >
+          <ChevronRight size={12} />
+        </div>
         {columns.map((col) => {
           const raw = row[col];
           const isTime = col === "_time";
@@ -337,6 +347,12 @@ export function ResultsTable({
               class={cellClasses}
               title={fullValue}
               role="cell"
+              onClick={(e: MouseEvent) => {
+                if (onCellCopy && fullValue) {
+                  e.stopPropagation();
+                  onCellCopy(fullValue, e.clientX, e.clientY);
+                }
+              }}
             >
               {wrap ? fullValue : display}
             </div>
@@ -353,6 +369,7 @@ export function ResultsTable({
       <div class={styles.scrollContainer} ref={scrollContainerRef} onScroll={handleScroll}>
         {/* Header row inside scroll container for sticky top:0 */}
         <div class={styles.headerRow} style={gridStyle} role="row">
+          <div class={styles.gutterHeader} />
           {columns.map((col) => {
             const isSorted = currentSort?.field === col;
             const cellClasses = [

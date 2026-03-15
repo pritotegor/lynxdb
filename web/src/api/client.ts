@@ -64,11 +64,13 @@ export async function executeQuery(
   from?: string,
   to?: string,
   limit?: number,
+  offset?: number,
 ): Promise<QueryResponse> {
   const body: Record<string, unknown> = { q: query };
   if (from) body.from = from;
   if (to) body.to = to;
   if (limit) body.limit = limit;
+  if (offset) body.offset = offset;
 
   const resp = await apiFetch(`${BASE}/api/v1/query`, {
     method: "POST",
