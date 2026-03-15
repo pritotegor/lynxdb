@@ -79,3 +79,23 @@
 .tailSep {
   color: var(--text-muted);
 }
+
+/* --- MV acceleration badge --- */
+
+.mvBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: 8px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+
+.mvIcon {
+  font-size: 0.8125rem;
+  line-height: 1;
+}

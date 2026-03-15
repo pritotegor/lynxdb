@@ -81,10 +81,21 @@ export function QueryStatsBar({
     parts.push(`(scanned ${formatCount(stats.scanned)})`);
   }
 
+  // MV acceleration info from query response meta
+  const acceleratedBy = stats.stats?.accelerated_by as string | undefined;
+  const mvSpeedup = stats.stats?.mv_speedup as string | undefined;
+
   return (
     <div class={styles.bar} role="status" aria-live="polite">
       <span class={styles.success} aria-hidden="true">&#10003;</span>
       {parts.join(" ")}
+      {acceleratedBy && (
+        <span class={styles.mvBadge}>
+          <span class={styles.mvIcon} aria-hidden="true">&#9889;</span>
+          MV: {acceleratedBy}
+          {mvSpeedup && ` (~${mvSpeedup})`}
+        </span>
+      )}
     </div>
   );
 }
