@@ -129,15 +129,15 @@
 }
 
 .jsonString {
-  color: #79c0ff;
+  color: #2563eb;
 }
 
 .jsonNumber {
-  color: #79c0ff;
+  color: #0d9488;
 }
 
 .jsonBool {
-  color: #ff7b72;
+  color: #c4432b;
 }
 
 .jsonNull {

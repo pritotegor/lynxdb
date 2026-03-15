@@ -15,7 +15,8 @@ export function Layout({ children }: Props) {
     <div class={styles.layout}>
       <header class={styles.topbar}>
         <a href="/" class={styles.logo}>
-          <span class={styles.logoMark}>&#9656;</span> LynxDB
+          <img src="/lynxdb-icon.png" alt="LynxDB" class={styles.logoImg} />
+          <span class={styles.logoText}>LynxDB</span>
         </a>
         <nav class={styles.navLinks}>
           <a href="/" class={url === "/" ? styles.active : undefined}>

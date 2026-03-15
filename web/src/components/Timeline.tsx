@@ -92,9 +92,9 @@ export function Timeline({ buckets, visible, onBrush }: TimelineProps) {
     const data = toUPlotData(buckets);
 
     // Resolve colors from CSS vars
-    const accentColor = cssVar("--accent") || "#58a6ff";
-    const borderColor = cssVar("--border") || "#30363d";
-    const textMuted = cssVar("--text-muted") || "#6e7681";
+    const accentColor = cssVar("--accent") || "#4F46E5";
+    const borderColor = cssVar("--border") || "#e5e7eb";
+    const textMuted = cssVar("--text-muted") || "#9ca3af";
 
     // Compute bar width from data spacing
     const barWidthFactor = buckets.length > 1 ? 0.85 : 0.5;

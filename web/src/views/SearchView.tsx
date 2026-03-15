@@ -6,17 +6,26 @@ import { TimeRangePicker } from "../components/TimeRangePicker";
 import { ResultsTable } from "../components/ResultsTable";
 import { EventDetail } from "../components/EventDetail";
 import { QueryStatsBar } from "../components/QueryStats";
-import { FieldSidebar } from "../components/FieldSidebar";
+import { FlowSidebar } from "../components/FlowSidebar";
 import { Timeline } from "../components/Timeline";
 import { LiveTailButton } from "../components/LiveTailButton";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
-import { executeQuery, fetchFields, fetchHistogram } from "../api/client";
+import {
+  executeQuery,
+  fetchHistogram,
+  fetchIndexes,
+  fetchViews,
+  fetchExplain,
+  fetchFields,
+} from "../api/client";
 import { startTail } from "../api/sse";
 import type {
   QueryResult,
   QueryStats,
   EventsResult,
-  FieldInfo,
+  IndexInfo,
+  ViewSummary,
+  ExplainResult,
   HistogramBucket,
 } from "../api/client";
 import type { TailEvent } from "../api/sse";
@@ -37,10 +46,15 @@ const selectedEvent = signal<Record<string, unknown> | null>(null);
 
 /* --- Part 3 signals --- */
 const sidebarVisible = signal(true);
-const sidebarFields = signal<FieldInfo[]>([]);
 const timelineBuckets = signal<HistogramBucket[]>([]);
 /** Track whether at least one query has been executed (controls timeline visibility) */
 const hasQueried = signal(false);
+
+/* --- Flow sidebar signals --- */
+const sidebarIndexes = signal<IndexInfo[]>([]);
+const sidebarViews = signal<ViewSummary[]>([]);
+const explainResult = signal<ExplainResult | null>(null);
+const fieldTypeMap = signal<Map<string, string>>(new Map());
 
 /* --- Part 4: Live Tail signals --- */
 const tailActive = signal(false);
@@ -77,16 +91,16 @@ function runQueryAndRefresh(q: string, fromVal: string, toVal: string | undefine
       stats.value = resp.stats;
       hasQueried.value = true;
 
-      // Fetch fields and histogram in parallel after query succeeds.
+      // Fetch histogram and explain in parallel after query succeeds.
       // These are non-blocking -- failures are silently ignored so
       // the primary query result is never held back.
-      fetchFields()
-        .then((fields) => { sidebarFields.value = fields; })
-        .catch(() => { /* non-critical */ });
-
       fetchHistogram(fromVal, toVal, 60)
         .then((histResult) => { timelineBuckets.value = histResult.buckets; })
         .catch(() => { /* non-critical */ });
+
+      fetchExplain(q, fromVal, toVal)
+        .then((explain) => { explainResult.value = explain; })
+        .catch(() => { /* non-critical -- explain is an enhancement */ });
     })
     .catch((err: unknown) => {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -157,16 +171,19 @@ export function SearchView(_props: Props) {
     sidebarVisible.value = !sidebarVisible.value;
   }, []);
 
-  const handleFieldFilter = useCallback((field: string, value: string) => {
-    // Append a WHERE clause to the current query and re-execute
+  const handleInsertCommand = useCallback((template: string) => {
     const current = query.value.trim();
-    const clause = `| where ${field}="${value}"`;
-    query.value = current ? `${current} ${clause}` : clause;
-
-    // Defer execution so the signal write above propagates to the
-    // QueryEditor before we read query.value for the API call.
+    query.value = current ? `${current} ${template}` : template;
     setTimeout(() => {
-      runQueryAndRefresh(query.value.trim(), from.value, to.value);
+      editorHandleRef.current?.focus();
+    }, 0);
+  }, []);
+
+  const handleSetSource = useCallback((name: string) => {
+    query.value = `from ${name} `;
+    // Focus the editor so the user can continue typing
+    setTimeout(() => {
+      editorHandleRef.current?.focus();
     }, 0);
   }, []);
 
@@ -295,6 +312,22 @@ export function SearchView(_props: Props) {
     };
   }, []);
 
+  // Fetch indexes, views, and field catalog on mount for the flow sidebar
+  useEffect(() => {
+    Promise.allSettled([fetchIndexes(), fetchViews(), fetchFields()])
+      .then(([idx, views, fields]) => {
+        if (idx.status === "fulfilled") sidebarIndexes.value = idx.value;
+        if (views.status === "fulfilled") sidebarViews.value = views.value;
+        if (fields.status === "fulfilled") {
+          const m = new Map<string, string>();
+          for (const f of fields.value) {
+            m.set(f.name, f.type);
+          }
+          fieldTypeMap.value = m;
+        }
+      });
+  }, []);
+
   // Build an EventsResult from live tail events for ResultsTable
   const activeResult: QueryResult | null = tailActive.value
     ? ({
@@ -336,11 +369,15 @@ export function SearchView(_props: Props) {
       </div>
 
       <div class={styles.body}>
-        <FieldSidebar
+        <FlowSidebar
           visible={sidebarVisible.value}
-          fields={sidebarFields.value}
+          indexes={sidebarIndexes.value}
+          views={sidebarViews.value}
+          explainResult={explainResult.value}
+          fieldTypes={fieldTypeMap.value}
           onToggle={handleSidebarToggle}
-          onFieldFilter={handleFieldFilter}
+          onSelectSource={handleSetSource}
+          onInsertCommand={handleInsertCommand}
         />
 
         <div class={styles.mainContent}>

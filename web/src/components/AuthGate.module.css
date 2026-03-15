@@ -21,15 +21,15 @@
 }
 
 .logo {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
   font-weight: 600;
   font-size: 1.25rem;
   color: var(--text-primary);
   letter-spacing: -0.01em;
   margin-block-end: 0.25rem;
-}
-
-.logoMark {
-  color: var(--accent);
 }
 
 .subtitle {

@@ -4,7 +4,7 @@ import { tags } from "@lezer/highlight";
 
 export const lynxTheme = EditorView.theme({
   "&": {
-    backgroundColor: "var(--bg-secondary)",
+    backgroundColor: "var(--bg-primary)",
     color: "var(--text-primary)",
     fontSize: "14px",
     fontFamily: "var(--font-mono)",
@@ -17,7 +17,7 @@ export const lynxTheme = EditorView.theme({
     borderLeftColor: "var(--accent)",
   },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
-    backgroundColor: "rgba(88, 166, 255, 0.2)",
+    backgroundColor: "rgba(79, 70, 229, 0.12)",
   },
   ".cm-activeLine": {
     backgroundColor: "transparent",
@@ -34,10 +34,10 @@ export const lynxTheme = EditorView.theme({
   },
   /* Autocomplete tooltip styling */
   ".cm-tooltip.cm-tooltip-autocomplete": {
-    backgroundColor: "var(--bg-secondary)",
+    backgroundColor: "var(--bg-primary)",
     border: "1px solid var(--border)",
     borderRadius: "var(--radius)",
-    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.4)",
+    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.1)",
     overflow: "hidden",
   },
   ".cm-tooltip-autocomplete ul": {
@@ -63,16 +63,16 @@ export const lynxTheme = EditorView.theme({
   ".cm-completionIcon": {
     opacity: "0.6",
   },
-}, { dark: true });
+}, { dark: false });
 
 export const lynxHighlighting = syntaxHighlighting(HighlightStyle.define([
-  { tag: tags.keyword, color: "#79c0ff" },
-  { tag: tags.definitionKeyword, color: "#79c0ff" },
-  { tag: tags.function(tags.variableName), color: "#d2a8ff" },
-  { tag: tags.operator, color: "#ff7b72" },
-  { tag: tags.string, color: "#a5d6ff" },
-  { tag: tags.number, color: "#79c0ff" },
-  { tag: tags.bool, color: "#ff7b72" },
+  { tag: tags.keyword, color: "#4F46E5" },
+  { tag: tags.definitionKeyword, color: "#4F46E5" },
+  { tag: tags.function(tags.variableName), color: "#7c3aed" },
+  { tag: tags.operator, color: "#c4432b" },
+  { tag: tags.string, color: "#2563eb" },
+  { tag: tags.number, color: "#0d9488" },
+  { tag: tags.bool, color: "#c4432b" },
   { tag: tags.comment, color: "var(--text-muted)", fontStyle: "italic" },
   { tag: tags.punctuation, color: "var(--text-secondary)" },
   { tag: tags.name, color: "var(--text-primary)" },

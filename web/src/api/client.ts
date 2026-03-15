@@ -175,3 +175,82 @@ export async function fetchStatus(): Promise<Record<string, unknown>> {
   const json = await resp.json();
   return json.data;
 }
+
+// ---------------------------------------------------------------------------
+// Explain (pipeline introspection)
+// ---------------------------------------------------------------------------
+
+export interface PipelineStage {
+  command: string;
+  description?: string;
+  fields_added?: string[];
+  fields_removed?: string[];
+  fields_out?: string[];
+  fields_optional?: string[];
+  fields_unknown?: boolean;
+}
+
+export interface ExplainResult {
+  is_valid: boolean;
+  errors?: { message: string; suggestion?: string }[];
+  parsed?: {
+    pipeline: PipelineStage[];
+    result_type: string;
+    fields_read: string[];
+    source_scope?: { type: string; resolved_sources?: string[] };
+  };
+}
+
+export async function fetchExplain(
+  q: string,
+  from?: string,
+  to?: string,
+): Promise<ExplainResult> {
+  const params = new URLSearchParams({ q });
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+
+  const resp = await apiFetch(`${BASE}/api/v1/query/explain?${params}`);
+  if (!resp.ok) {
+    const err = await resp
+      .json()
+      .catch(() => ({ error: { message: resp.statusText } }));
+    throw new Error(
+      err.error?.message || err.data?.error || resp.statusText,
+    );
+  }
+  const json = await resp.json();
+  return json.data as ExplainResult;
+}
+
+// ---------------------------------------------------------------------------
+// Materialized views
+// ---------------------------------------------------------------------------
+
+export interface ViewSummary {
+  name: string;
+  status: string;
+  query: string;
+  type: string;
+}
+
+export interface ViewDetail extends ViewSummary {
+  columns: { name: string; type: string }[];
+  retention: string;
+}
+
+export async function fetchViews(): Promise<ViewSummary[]> {
+  const resp = await apiFetch(`${BASE}/api/v1/views`);
+  if (!resp.ok) throw new Error("Failed to fetch views");
+  const json: APIResponse<{ views: ViewSummary[] }> = await resp.json();
+  return json.data.views ?? [];
+}
+
+export async function fetchViewDetail(name: string): Promise<ViewDetail> {
+  const resp = await apiFetch(
+    `${BASE}/api/v1/views/${encodeURIComponent(name)}`,
+  );
+  if (!resp.ok) throw new Error("Failed to fetch view detail");
+  const json: APIResponse<ViewDetail> = await resp.json();
+  return json.data;
+}

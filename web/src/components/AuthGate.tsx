@@ -70,7 +70,8 @@ function LoginForm() {
     <div class={styles.backdrop}>
       <form class={styles.card} onSubmit={handleSubmit}>
         <div class={styles.logo}>
-          <span class={styles.logoMark}>&#9656;</span> LynxDB
+          <img src="/lynxdb-icon.png" alt="LynxDB" style={{ height: '32px' }} />
+          LynxDB
         </div>
         <div class={styles.subtitle}>Enter your API key to continue</div>
 

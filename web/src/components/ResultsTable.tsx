@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect } from "preact/hooks";
+import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "preact/hooks";
 import type { QueryResult, EventsResult, AggregateResult } from "../api/client";
 import styles from "./ResultsTable.module.css";
 
@@ -105,12 +105,12 @@ function useTableData(result: QueryResult | null): {
 export function ResultsTable({ result, onRowClick, selectedRow }: ResultsTableProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(600);
 
   const { columns, rowCount, getRow } = useTableData(result);
 
-  // Track viewport height
-  useEffect(() => {
+  // Track viewport height — useLayoutEffect ensures measurement before paint
+  useLayoutEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
 
@@ -120,7 +120,7 @@ export function ResultsTable({ result, onRowClick, selectedRow }: ResultsTablePr
       }
     });
     obs.observe(el);
-    setViewportHeight(el.clientHeight);
+    setViewportHeight(el.clientHeight || 600);
 
     return () => obs.disconnect();
   }, []);

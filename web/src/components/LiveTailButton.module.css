@@ -28,13 +28,13 @@
 }
 
 .active {
-  background: rgba(63, 185, 80, 0.15);
+  background: rgba(5, 150, 105, 0.1);
   border-color: var(--success);
   color: var(--success);
 }
 
 .active:hover {
-  background: rgba(63, 185, 80, 0.22);
+  background: rgba(5, 150, 105, 0.15);
   border-color: var(--success);
   color: var(--success);
 }
