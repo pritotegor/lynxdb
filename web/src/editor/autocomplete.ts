@@ -13,7 +13,7 @@ import {
 } from "../api/client";
 
 // ---------------------------------------------------------------------------
-// Completion cache — module-level, refreshed every 60 s or on first trigger
+// Completion cache -- module-level, refreshed every 60 s or on first trigger
 // ---------------------------------------------------------------------------
 
 let cachedFields: FieldInfo[] = [];
@@ -28,7 +28,7 @@ async function ensureCache(): Promise<void> {
     return;
   }
 
-  // Fetch both in parallel; failures are non-critical — keep stale cache
+  // Fetch both in parallel; failures are non-critical -- keep stale cache
   const [fieldsResult, indexesResult] = await Promise.allSettled([
     fetchFields(),
     fetchIndexes(),
@@ -56,6 +56,53 @@ const COMMANDS: readonly string[] = [
   "explode", "pack", "materialize", "every", "bucket", "running", "enrich",
   "rank", "select", "transaction", "xyseries", "multisearch",
 ];
+
+/** Brief descriptions for commands, shown as detail in autocomplete */
+const COMMAND_DOCS: Record<string, string> = {
+  from: "Select data source",
+  search: "Full-text search",
+  where: "Filter rows",
+  group: "Group and aggregate",
+  order: "Sort results",
+  take: "Limit result count",
+  let: "Assign expression",
+  parse: "Extract fields",
+  keep: "Keep specified fields",
+  omit: "Remove fields",
+  rename: "Rename fields",
+  dedup: "Remove duplicates",
+  join: "Join datasets",
+  append: "Append results",
+  fillnull: "Replace nulls",
+  table: "Format as table",
+  top: "Top N values",
+  bottom: "Bottom N values",
+  rare: "Least common values",
+  sort: "Sort results",
+  head: "First N rows",
+  tail: "Last N rows",
+  stats: "Aggregate statistics",
+  eval: "Evaluate expression",
+  rex: "Regex field extraction",
+  bin: "Bucket values",
+  timechart: "Time-series chart",
+  streamstats: "Running statistics",
+  eventstats: "Event-level stats",
+  fields: "Select/remove fields",
+  limit: "Limit result count",
+  explode: "Expand multivalue",
+  pack: "Combine fields",
+  materialize: "Create materialized view",
+  every: "Recurring schedule",
+  bucket: "Bucket values",
+  running: "Running aggregate",
+  enrich: "Enrich with lookup",
+  rank: "Rank rows",
+  select: "Select columns",
+  transaction: "Group into transactions",
+  xyseries: "Pivot to XY series",
+  multisearch: "Search multiple sources",
+};
 
 const AGG_FUNCTIONS: readonly string[] = [
   "count()", "sum()", "avg()", "min()", "max()", "dc()", "values()",
@@ -99,8 +146,9 @@ async function lynxflowCompletion(
   const beforeCursor = textBefore;
   const { word } = currentWord(beforeCursor);
   const absFrom = context.pos - word.length;
+  const lowerWord = word.toLowerCase();
 
-  // --- After "field=" or "field!=" → field values ---
+  // --- After "field=" or "field!=" -> field values ---
   // Match patterns like: level=err, level="err, status!=2
   const fieldValueMatch = beforeCursor.match(/(\w+)[!=]+["']?(\w*)$/);
   if (fieldValueMatch) {
@@ -119,7 +167,7 @@ async function lynxflowCompletion(
     }
   }
 
-  // --- After pipe or at very start → commands ---
+  // --- After pipe or at very start -> commands ---
   if (/\|\s*\w*$/.test(beforeCursor) || beforeCursor.trim() === word) {
     // Only suggest commands if the only thing typed is the partial word,
     // or we are right after a pipe.
@@ -133,13 +181,15 @@ async function lynxflowCompletion(
         options: COMMANDS.map((cmd) => ({
           label: cmd,
           type: "keyword",
+          detail: COMMAND_DOCS[cmd] || "command",
+          boost: lowerWord && cmd.toLowerCase().startsWith(lowerWord) ? 1 : 0,
         })),
         filter: true,
       };
     }
   }
 
-  // --- After "from " → index names ---
+  // --- After "from " -> index names ---
   if (/\bfrom\s+\w*$/.test(beforeCursor)) {
     return {
       from: absFrom,
@@ -147,12 +197,13 @@ async function lynxflowCompletion(
         label: idx.name,
         type: "variable",
         detail: "index",
+        boost: lowerWord && idx.name.toLowerCase().startsWith(lowerWord) ? 1 : 0,
       })),
       filter: true,
     };
   }
 
-  // --- After "by ", "where ", "group ", "order ", "keep ", "omit " → field names ---
+  // --- After "by ", "where ", "group ", "order ", "keep ", "omit " -> field names ---
   if (/\b(?:by|where|group|order|keep|omit|on)\s+\w*$/.test(beforeCursor)) {
     return {
       from: absFrom,
@@ -160,12 +211,13 @@ async function lynxflowCompletion(
         label: f.name,
         type: "property",
         detail: f.type,
+        boost: lowerWord && f.name.toLowerCase().startsWith(lowerWord) ? 1 : 0,
       })),
       filter: true,
     };
   }
 
-  // --- After comma in a field list (by field1, field2) → field names ---
+  // --- After comma in a field list (by field1, field2) -> field names ---
   if (/\b(?:by|keep|omit)\s+[\w,\s]+,\s*\w*$/.test(beforeCursor)) {
     return {
       from: absFrom,
@@ -173,32 +225,37 @@ async function lynxflowCompletion(
         label: f.name,
         type: "property",
         detail: f.type,
+        boost: lowerWord && f.name.toLowerCase().startsWith(lowerWord) ? 1 : 0,
       })),
       filter: true,
     };
   }
 
-  // --- After "compute " or "stats " → aggregation functions ---
+  // --- After "compute " or "stats " -> aggregation functions ---
   if (/\b(?:compute|stats)\s+\w*$/.test(beforeCursor)) {
     return {
       from: absFrom,
       options: AGG_FUNCTIONS.map((fn) => ({
         label: fn,
         type: "function",
+        detail: "function",
         apply: fn,
+        boost: lowerWord && fn.toLowerCase().startsWith(lowerWord) ? 1 : 0,
       })),
       filter: true,
     };
   }
 
-  // --- After comma in compute/stats list → aggregation functions ---
+  // --- After comma in compute/stats list -> aggregation functions ---
   if (/\b(?:compute|stats)\s+[\w(),\s]+,\s*\w*$/.test(beforeCursor)) {
     return {
       from: absFrom,
       options: AGG_FUNCTIONS.map((fn) => ({
         label: fn,
         type: "function",
+        detail: "function",
         apply: fn,
+        boost: lowerWord && fn.toLowerCase().startsWith(lowerWord) ? 1 : 0,
       })),
       filter: true,
     };
@@ -212,6 +269,7 @@ async function lynxflowCompletion(
         label: f.name,
         type: "property",
         detail: f.type,
+        boost: lowerWord && f.name.toLowerCase().startsWith(lowerWord) ? 1 : 0,
       })),
       filter: true,
     };
@@ -245,7 +303,7 @@ async function getFieldValues(fieldName: string): Promise<Completion[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Public API — returns a CodeMirror extension
+// Public API -- returns a CodeMirror extension
 // ---------------------------------------------------------------------------
 
 export function lynxflowAutocompletion() {
