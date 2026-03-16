@@ -47,6 +47,16 @@
   color: var(--accent);
 }
 
+.cancelBtn {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.cancelBtn:hover {
+  background: var(--error);
+  color: var(--bg-primary);
+}
+
 /* Main body: sidebar + content side by side */
 .body {
   display: flex;

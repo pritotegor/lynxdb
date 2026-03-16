@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "preact/hooks";
-import { signal } from "@preact/signals";
+import { signal, batch } from "@preact/signals";
 import { QueryEditor } from "../editor/QueryEditor";
 import type { QueryEditorHandle } from "../editor/QueryEditor";
 import { TimeRangePicker } from "../components/TimeRangePicker";
@@ -15,7 +15,6 @@ import { ListView } from "../components/ListView";
 import { CopyTooltip } from "../components/CopyTooltip";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import {
-  executeQuery,
   fetchHistogram,
   fetchHistogramGrouped,
   fetchIndexes,
@@ -23,6 +22,11 @@ import {
   fetchExplain,
   fetchFields,
 } from "../api/client";
+import {
+  submitHybridQuery,
+  streamQuery,
+  subscribeJobProgress,
+} from "../api/streaming";
 import { authHeaders } from "../api/auth";
 import { startTail } from "../api/sse";
 import { pushHistory } from "../stores/queryHistory";
@@ -85,6 +89,20 @@ const tailEvents = signal<TailEvent[]>([]);
 const tailNewCount = signal(0);
 const tailCatchupDone = signal(false);
 
+/* --- Phase 5: Streaming & Progress signals --- */
+/** True while any query execution mode is active (sync wait, streaming, progress) */
+const queryActive = signal(false);
+/** True while NDJSON streaming is in progress */
+const streaming = signal(false);
+/** Row count during streaming */
+const streamingCount = signal(0);
+/** Aggregation progress data */
+const progressData = signal<{ percent: number; scanned: number; total: number; elapsedMs: number } | null>(null);
+/** True when query was canceled */
+const canceled = signal(false);
+/** Live elapsed milliseconds since query started */
+const elapsedMs = signal(0);
+
 /* --- Pagination, view mode, toolbar signals --- */
 const page = signal(1);
 const pageSize = signal(100);
@@ -103,6 +121,46 @@ let explainDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Timer for copy tooltip auto-hide */
 let copyTooltipTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Current AbortController for the active query -- null when idle */
+let activeAbortController: AbortController | null = null;
+/** SSE cleanup function for aggregation job progress */
+let jobProgressCleanup: (() => void) | null = null;
+/** Elapsed timer interval ID */
+let elapsedTimerId: ReturnType<typeof setInterval> | null = null;
+/** Monotonic query counter to discard stale responses (Pitfall 3) */
+let queryGeneration = 0;
+
+// ---------------------------------------------------------------------------
+// Streaming helpers
+// ---------------------------------------------------------------------------
+
+function startElapsedTimer() {
+  const startTime = performance.now();
+  elapsedMs.value = 0;
+  elapsedTimerId = setInterval(() => {
+    elapsedMs.value = performance.now() - startTime;
+  }, 100);
+}
+
+function stopElapsedTimer() {
+  if (elapsedTimerId !== null) {
+    clearInterval(elapsedTimerId);
+    elapsedTimerId = null;
+  }
+}
+
+function cleanupActiveQuery() {
+  if (jobProgressCleanup) { jobProgressCleanup(); jobProgressCleanup = null; }
+  stopElapsedTimer();
+  activeAbortController = null;
+}
+
+/** Regex heuristic for detecting aggregation queries (Pitfall 7). */
+const AGG_PATTERN = /\|\s*(stats|timechart|top|rare|chart|eventstats|streamstats)\b/i;
+function detectResultType(q: string): "events" | "aggregate" {
+  return AGG_PATTERN.test(q) ? "aggregate" : "events";
+}
 
 function resultCount(r: QueryResult | null): number {
   if (!r) return 0;
@@ -145,11 +203,63 @@ function getResultRows(r: QueryResult): Record<string, unknown>[] {
 }
 
 /**
- * Run a query and update all relevant signals (result, stats, fields,
- * histogram). Reused by the primary execute handler, field-filter, and
- * timeline brush to avoid duplicating the orchestration logic.
+ * Post-query side effects: push history, update URL hash, clear diagnostics,
+ * fetch histogram/explain/fields. Extracted so both sync and streaming paths
+ * can call it after query completion.
+ */
+function runPostQueryEffects(
+  q: string,
+  fromVal: string,
+  toVal: string | undefined,
+  pg: number,
+  sz: number,
+): void {
+  hasQueried.value = true;
+
+  pushHistory(q);
+  writeQueryToHash(q, fromVal, toVal, pg, sz);
+
+  const view = getEditorView?.();
+  if (view) clearEditorDiagnostics(view);
+
+  // Fetch grouped histogram (with ungrouped fallback) and explain in
+  // parallel after query succeeds. Non-blocking -- failures ignored.
+  fetchHistogramGrouped(fromVal, toVal, 60, "level")
+    .then((histResult) => {
+      groupedBuckets.value = histResult.buckets;
+      timelineBuckets.value = [];
+    })
+    .catch(() => {
+      fetchHistogram(fromVal, toVal, 60)
+        .then((histResult) => {
+          timelineBuckets.value = histResult.buckets;
+          groupedBuckets.value = [];
+        })
+        .catch(() => { /* non-critical */ });
+    });
+
+  fetchExplain(q, fromVal, toVal)
+    .then((explain) => { explainResult.value = explain; })
+    .catch(() => { /* non-critical */ });
+
+  fetchFields()
+    .then((fields) => {
+      catalogFields.value = fields;
+      const m = new Map<string, string>();
+      for (const f of fields) m.set(f.name, f.type);
+      fieldTypeMap.value = m;
+    })
+    .catch(() => { /* non-critical */ });
+}
+
+/**
+ * Run a query with adaptive sync/streaming execution.
  *
- * Accepts optional pg/sz params for pagination. Computes offset from page*size.
+ * Flow: submit hybrid query (200ms sync wait). If fast, instant swap. If slow,
+ * switch to NDJSON streaming (search) or SSE progress tracking (aggregation).
+ * Previous results stay visible during the initial 200ms wait period.
+ *
+ * Accepts optional pg/sz params for pagination.
  */
 function runQueryAndRefresh(
   q: string,
@@ -158,66 +268,242 @@ function runQueryAndRefresh(
   pg?: number,
   sz?: number,
 ): void {
-  if (!q || loading.value) return;
+  if (!q || queryActive.value) return;
 
   const currentPage = pg ?? page.value;
   const currentSize = sz ?? pageSize.value;
   const currentOffset = (currentPage - 1) * currentSize;
 
-  loading.value = true;
-  error.value = null;
-  result.value = null;
-  stats.value = null;
-  selectedEvent.value = null;
+  // Increment generation counter to detect stale responses
+  queryGeneration++;
+  const gen = queryGeneration;
 
-  executeQuery(q, fromVal, toVal, currentSize, currentOffset)
-    .then((resp) => {
-      result.value = resp.result;
-      stats.value = resp.stats;
-      hasQueried.value = true;
+  // Cancel any previous query
+  if (activeAbortController) activeAbortController.abort();
+  cleanupActiveQuery();
 
-      // Save to history and update URL hash on successful execution
-      pushHistory(q);
-      writeQueryToHash(q, fromVal, toVal, currentPage, currentSize);
+  // Create new AbortController
+  const controller = new AbortController();
+  activeAbortController = controller;
 
-      // Clear diagnostics on successful query
-      const view = getEditorView?.();
-      if (view) clearEditorDiagnostics(view);
+  // Reset state -- do NOT clear result.value yet (previous results stay during 200ms wait)
+  batch(() => {
+    queryActive.value = true;
+    canceled.value = false;
+    streaming.value = false;
+    streamingCount.value = 0;
+    progressData.value = null;
+    error.value = null;
+  });
 
-      // Fetch grouped histogram (with ungrouped fallback) and explain in
-      // parallel after query succeeds. Non-blocking -- failures ignored.
-      fetchHistogramGrouped(fromVal, toVal, 60, "level")
-        .then((histResult) => {
-          groupedBuckets.value = histResult.buckets;
-          timelineBuckets.value = [];
-        })
-        .catch(() => {
-          // Fallback to ungrouped histogram
-          fetchHistogram(fromVal, toVal, 60)
-            .then((histResult) => {
-              timelineBuckets.value = histResult.buckets;
-              groupedBuckets.value = [];
-            })
-            .catch(() => { /* non-critical */ });
+  // Start elapsed timer
+  startElapsedTimer();
+
+  // Detect result type for choosing streaming vs progress path
+  const resultType = detectResultType(q);
+
+  submitHybridQuery(q, fromVal, toVal, currentSize, currentOffset, controller.signal)
+    .then((hybrid) => {
+      // Discard stale responses
+      if (gen !== queryGeneration) return;
+
+      if (hybrid.status === "sync") {
+        // FAST PATH: query completed within 200ms -- instant swap
+        batch(() => {
+          result.value = hybrid.syncResult!.result;
+          stats.value = hybrid.syncResult!.stats;
+          loading.value = false;
+          queryActive.value = false;
         });
+        stopElapsedTimer();
+        elapsedMs.value = hybrid.syncResult!.stats.took_ms;
+        runPostQueryEffects(q, fromVal, toVal, currentPage, currentSize);
+        cleanupActiveQuery();
+        return;
+      }
 
-      fetchExplain(q, fromVal, toVal)
-        .then((explain) => { explainResult.value = explain; })
-        .catch(() => { /* non-critical -- explain is an enhancement */ });
+      // SLOW PATH: query is async -- clear previous results
+      batch(() => {
+        result.value = null;
+        stats.value = null;
+        selectedEvent.value = null;
+      });
 
-      // Re-fetch field catalog after each query to pick up newly discovered fields (Pitfall 5)
-      fetchFields()
-        .then((fields) => {
-          catalogFields.value = fields;
-          const m = new Map<string, string>();
-          for (const f of fields) m.set(f.name, f.type);
-          fieldTypeMap.value = m;
-        })
-        .catch(() => { /* non-critical */ });
+      if (resultType === "events") {
+        // --- NDJSON streaming for search queries ---
+        streaming.value = true;
+        streamingCount.value = 0;
+        const rows: Record<string, unknown>[] = [];
+        let streamMeta: { total?: number; scanned?: number; took_ms?: number } = {};
+
+        streamQuery(q, fromVal, toVal, {
+          onRow(row) {
+            rows.push(row);
+            // Only keep up to pageSize rows for display
+            if (rows.length <= currentSize) {
+              batch(() => {
+                streamingCount.value = rows.length;
+                // Update result incrementally for live display
+                result.value = {
+                  type: "events",
+                  events: rows.slice(0, currentSize),
+                  total: rows.length,
+                  has_more: false,
+                } satisfies EventsResult;
+              });
+            } else {
+              streamingCount.value = rows.length;
+            }
+          },
+          onMeta(meta) {
+            streamMeta = meta;
+          },
+          onError(message) {
+            error.value = message;
+          },
+        }, controller.signal, currentSize)
+          .then(() => {
+            if (gen !== queryGeneration) return;
+            batch(() => {
+              result.value = {
+                type: "events",
+                events: rows.slice(0, currentSize),
+                total: streamMeta.total ?? rows.length,
+                has_more: (streamMeta.total ?? rows.length) > currentSize,
+              } satisfies EventsResult;
+              stats.value = {
+                took_ms: streamMeta.took_ms ?? elapsedMs.value,
+                scanned: streamMeta.scanned ?? 0,
+              };
+              streaming.value = false;
+              queryActive.value = false;
+              loading.value = false;
+            });
+            stopElapsedTimer();
+            runPostQueryEffects(q, fromVal, toVal, currentPage, currentSize);
+            cleanupActiveQuery();
+          })
+          .catch((err: unknown) => {
+            if (gen !== queryGeneration) return;
+            if (err instanceof DOMException && err.name === "AbortError") {
+              // Cancel: keep partial rows
+              batch(() => {
+                canceled.value = true;
+                streaming.value = false;
+                queryActive.value = false;
+                loading.value = false;
+              });
+              stopElapsedTimer();
+              cleanupActiveQuery();
+              return;
+            }
+            const message = err instanceof Error ? err.message : "Unknown error";
+            batch(() => {
+              error.value = message;
+              streaming.value = false;
+              queryActive.value = false;
+              loading.value = false;
+            });
+            stopElapsedTimer();
+            cleanupActiveQuery();
+          });
+      } else {
+        // --- SSE progress for aggregation queries ---
+        loading.value = true;
+        const jobId = hybrid.jobId;
+        if (!jobId) {
+          batch(() => {
+            error.value = "No job ID returned for async query";
+            loading.value = false;
+            queryActive.value = false;
+          });
+          stopElapsedTimer();
+          cleanupActiveQuery();
+          return;
+        }
+
+        const unsubscribe = subscribeJobProgress(
+          jobId,
+          (p) => {
+            // onProgress
+            if (gen !== queryGeneration) return;
+            progressData.value = {
+              percent: p.percent,
+              scanned: p.scanned,
+              total: p.segments_total ?? 0,
+              elapsedMs: p.elapsed_ms,
+            };
+          },
+          (data: unknown) => {
+            // onComplete -- parse result
+            if (gen !== queryGeneration) return;
+            const payload = data as { data?: QueryResult; meta?: { took_ms?: number; scanned?: number; query_id?: string; stats?: Record<string, unknown> } };
+            batch(() => {
+              result.value = payload.data ?? null;
+              stats.value = {
+                took_ms: payload.meta?.took_ms ?? elapsedMs.value,
+                scanned: payload.meta?.scanned ?? 0,
+                query_id: payload.meta?.query_id,
+                stats: payload.meta?.stats,
+              };
+              progressData.value = null;
+              queryActive.value = false;
+              loading.value = false;
+            });
+            stopElapsedTimer();
+            runPostQueryEffects(q, fromVal, toVal, currentPage, currentSize);
+            cleanupActiveQuery();
+          },
+          (message: string) => {
+            // onFailed
+            if (gen !== queryGeneration) return;
+            batch(() => {
+              error.value = message;
+              progressData.value = null;
+              queryActive.value = false;
+              loading.value = false;
+            });
+            stopElapsedTimer();
+            cleanupActiveQuery();
+          },
+          () => {
+            // onCanceled
+            if (gen !== queryGeneration) return;
+            batch(() => {
+              canceled.value = true;
+              result.value = null;
+              progressData.value = null;
+              queryActive.value = false;
+              loading.value = false;
+            });
+            stopElapsedTimer();
+            cleanupActiveQuery();
+          },
+        );
+
+        jobProgressCleanup = unsubscribe;
+      }
     })
     .catch((err: unknown) => {
+      if (gen !== queryGeneration) return;
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // Cancel during hybrid submit phase
+        batch(() => {
+          canceled.value = true;
+          queryActive.value = false;
+          loading.value = false;
+        });
+        stopElapsedTimer();
+        cleanupActiveQuery();
+        return;
+      }
       const message = err instanceof Error ? err.message : "Unknown error";
-      error.value = message;
+      batch(() => {
+        error.value = message;
+        queryActive.value = false;
+        loading.value = false;
+      });
+      stopElapsedTimer();
 
       // On failure, fetch explain to show diagnostics in the editor
       const view = getEditorView?.();
@@ -230,10 +516,20 @@ function runQueryAndRefresh(
           })
           .catch(() => { /* non-critical */ });
       }
-    })
-    .finally(() => {
-      loading.value = false;
+
+      cleanupActiveQuery();
     });
+}
+
+/** Cancel the currently running query. */
+function handleCancelQuery() {
+  if (!activeAbortController) return;
+  activeAbortController.abort();
+  // For aggregation jobs, fire-and-forget the server-side cancel
+  if (jobProgressCleanup) {
+    // The abort will trigger onCanceled via SSE or the catch block
+  }
+  cleanupActiveQuery();
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +602,11 @@ export function SearchView(_props: Props) {
 
   const handleExecute = useCallback(() => {
     if (tailActive.value) return; // block while tailing
+    // Ctrl+Enter while running -> cancel (dual behavior)
+    if (queryActive.value) {
+      handleCancelQuery();
+      return;
+    }
     // Reset to page 1 on new query execution (Pitfall 5)
     page.value = 1;
     runQueryAndRefresh(query.value.trim(), from.value, to.value, 1, pageSize.value);
@@ -589,13 +890,16 @@ export function SearchView(_props: Props) {
     return () => el.removeEventListener("scroll", onScroll, true);
   }, []);
 
-  // Cleanup SSE on unmount
+  // Cleanup SSE and streaming on unmount
   useEffect(() => {
     return () => {
       if (tailCleanupRef.current) {
         tailCleanupRef.current();
         tailCleanupRef.current = null;
       }
+      // Streaming/progress cleanup
+      if (activeAbortController) activeAbortController.abort();
+      cleanupActiveQuery();
     };
   }, []);
 
@@ -643,8 +947,8 @@ export function SearchView(_props: Props) {
     : result.value;
 
   // Determine which content to show in the results area
-  const showInitialEmpty = !tailActive.value && !hasQueried.value && !loading.value && !error.value;
-  const showNoResults = !tailActive.value && hasQueried.value && !loading.value && !error.value && resultCount(result.value) === 0;
+  const showInitialEmpty = !tailActive.value && !hasQueried.value && !loading.value && !queryActive.value && !error.value;
+  const showNoResults = !tailActive.value && hasQueried.value && !loading.value && !queryActive.value && !error.value && !canceled.value && resultCount(result.value) === 0;
 
   // Compute total count for pagination and toolbar
   const totalCount = activeResult
@@ -664,13 +968,13 @@ export function SearchView(_props: Props) {
         />
         <button
           type="button"
-          class={styles.runBtn}
+          class={`${styles.runBtn}${queryActive.value ? ` ${styles.cancelBtn}` : ""}`}
           onClick={handleExecute}
-          disabled={loading.value || tailActive.value}
-          aria-label="Run query"
-          title="Run query (Ctrl+Enter)"
+          disabled={tailActive.value}
+          aria-label={queryActive.value ? "Cancel query" : "Run query"}
+          title={queryActive.value ? "Cancel query (Ctrl+Enter)" : "Run query (Ctrl+Enter)"}
         >
-          &#9654;
+          {queryActive.value ? "\u25A0" : "\u25B6"}
         </button>
         <LiveTailButton
           active={tailActive.value}
@@ -720,6 +1024,11 @@ export function SearchView(_props: Props) {
             tailActive={tailActive.value}
             tailEventCount={tailEvents.value.length}
             tailCatchupDone={tailCatchupDone.value}
+            streaming={streaming.value}
+            streamingCount={streamingCount.value}
+            progress={progressData.value}
+            canceled={canceled.value}
+            elapsedMs={elapsedMs.value}
           />
 
           {/* Table toolbar -- only show when results exist */}
