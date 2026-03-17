@@ -32,7 +32,7 @@
 
 .retryBtn {
   padding: 6px 16px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-primary);
   color: var(--text-primary);
@@ -47,7 +47,7 @@
 .addPanelBtn {
   margin-top: var(--space-4);
   padding: var(--space-4);
-  border: 2px dashed var(--border-primary);
+  border: 2px dashed var(--border);
   border-radius: 6px;
   background: none;
   color: var(--text-secondary);
@@ -62,14 +62,18 @@
   color: var(--accent);
 }
 
-.emptyState {
+.emptyGrid {
+  min-height: 300px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-lg, 8px);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
-  height: 200px;
   color: var(--text-secondary);
   font-size: 0.85rem;
   text-align: center;
+  background-image: radial-gradient(circle, var(--border) 1px, transparent 1px);
+  background-size: 24px 24px;
 }

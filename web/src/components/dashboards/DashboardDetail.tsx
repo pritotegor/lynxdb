@@ -42,6 +42,7 @@ export function DashboardDetail({
 
   const gridRef = useRef<HTMLDivElement>(null);
   const gsRef = useRef<GridStack | null>(null);
+  const registeredPanels = useRef<Set<string>>(new Set());
 
   // Fetch dashboard
   useEffect(() => {
@@ -80,12 +81,11 @@ export function DashboardDetail({
     };
   }, [dashboardId]);
 
-  // Initialize gridstack
+  // Initialize GridStack once, re-init on editMode toggle
   useEffect(() => {
     const el = gridRef.current;
-    if (!el || unsavedPanels.length === 0) return;
+    if (!el) return;
 
-    // Destroy previous instance if exists
     if (gsRef.current) {
       gsRef.current.destroy(false);
       gsRef.current = null;
@@ -103,6 +103,17 @@ export function DashboardDetail({
       el,
     );
     gsRef.current = gs;
+    registeredPanels.current = new Set();
+
+    // Register any existing Preact-rendered items
+    const existingItems = el.querySelectorAll<HTMLElement>(".grid-stack-item");
+    for (const item of existingItems) {
+      const id = item.getAttribute("gs-id");
+      if (id) {
+        gs.makeWidget(item);
+        registeredPanels.current.add(id);
+      }
+    }
 
     // Listen for layout changes in edit mode
     gs.on("change", () => {
@@ -134,16 +145,34 @@ export function DashboardDetail({
     return () => {
       gs.destroy(false);
       gsRef.current = null;
+      registeredPanels.current = new Set();
     };
-  }, [unsavedPanels.length > 0, editMode]);
+  }, [editMode]);
 
-  // Update gridstack enable/disable on editMode change
+  // Register new panels with GridStack after Preact renders them
   useEffect(() => {
     const gs = gsRef.current;
-    if (!gs) return;
-    gs.enableMove(editMode);
-    gs.enableResize(editMode);
-  }, [editMode]);
+    const el = gridRef.current;
+    if (!gs || !el) return;
+
+    // Register any new items that Preact rendered but GridStack doesn't know about
+    const items = el.querySelectorAll<HTMLElement>(".grid-stack-item");
+    for (const item of items) {
+      const id = item.getAttribute("gs-id");
+      if (id && !registeredPanels.current.has(id)) {
+        gs.makeWidget(item);
+        registeredPanels.current.add(id);
+      }
+    }
+
+    // Clean up registered panels that were removed from state
+    const currentIds = new Set(unsavedPanels.map((p) => p.id));
+    for (const id of registeredPanels.current) {
+      if (!currentIds.has(id)) {
+        registeredPanels.current.delete(id);
+      }
+    }
+  }, [unsavedPanels]);
 
   // Auto-refresh
   useEffect(() => {
@@ -227,19 +256,8 @@ export function DashboardDetail({
         prev.map((p) => (p.id === panel.id ? panel : p)),
       );
     } else {
-      // Add new panel
+      // Add new panel -- only update Preact state; makeWidget runs via useEffect
       setUnsavedPanels((prev) => [...prev, panel]);
-      const gs = gsRef.current;
-      if (gs) {
-        gs.addWidget({
-          id: panel.id,
-          x: panel.position.x,
-          y: panel.position.y,
-          w: panel.position.w,
-          h: panel.position.h,
-          content: `<div id="panel-${panel.id}"></div>`,
-        });
-      }
     }
     setShowPanelForm(false);
     setEditingPanel(null);
@@ -265,6 +283,7 @@ export function DashboardDetail({
         .find((el) => el.getAttribute("gs-id") === panelId);
       if (item) gs.removeWidget(item);
     }
+    registeredPanels.current.delete(panelId);
   }
 
   const saveDisabled = !dashName.trim() || unsavedPanels.length === 0;
@@ -346,38 +365,37 @@ export function DashboardDetail({
 
       <div class={styles.gridArea}>
         {unsavedPanels.length === 0 && editMode && (
-          <div class={styles.emptyState}>
-            <div>No panels yet. Add your first panel to get started.</div>
+          <div class={styles.emptyGrid}>
+            <div>No panels yet</div>
+            <div>Add your first panel to get started</div>
           </div>
         )}
 
-        {unsavedPanels.length > 0 && (
-          <div ref={gridRef} class="grid-stack">
-            {unsavedPanels.map((panel) => (
-              <div
-                key={panel.id}
-                class="grid-stack-item"
-                gs-id={panel.id}
-                gs-x={panel.position.x}
-                gs-y={panel.position.y}
-                gs-w={panel.position.w}
-                gs-h={panel.position.h}
-              >
-                <div class="grid-stack-item-content">
-                  <PanelRenderer
-                    panel={panel}
-                    from={from}
-                    variables={activeVariables}
-                    refreshTick={refreshTick}
-                    editMode={editMode}
-                    onEdit={() => handleEditPanel(panel)}
-                    onDelete={() => handleDeletePanel(panel.id)}
-                  />
-                </div>
+        <div ref={gridRef} class="grid-stack">
+          {unsavedPanels.map((panel) => (
+            <div
+              key={panel.id}
+              class="grid-stack-item"
+              gs-id={panel.id}
+              gs-x={panel.position.x}
+              gs-y={panel.position.y}
+              gs-w={panel.position.w}
+              gs-h={panel.position.h}
+            >
+              <div class="grid-stack-item-content">
+                <PanelRenderer
+                  panel={panel}
+                  from={from}
+                  variables={activeVariables}
+                  refreshTick={refreshTick}
+                  editMode={editMode}
+                  onEdit={() => handleEditPanel(panel)}
+                  onDelete={() => handleDeletePanel(panel.id)}
+                />
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ))}
+        </div>
 
         {editMode && (
           <button
