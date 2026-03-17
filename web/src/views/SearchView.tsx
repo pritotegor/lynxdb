@@ -472,15 +472,32 @@ function runQueryAndRefresh(
             };
           },
           (data: unknown) => {
-            // onComplete -- parse result
-            // The SSE complete event sends QueryResult directly (not wrapped in {data, meta}).
+            // onComplete -- SSE complete event is now { data: QueryResult, meta: DetailedStats }
             if (gen !== queryGeneration) return;
+            const payload = data as { data: QueryResult; meta?: Record<string, unknown> } | QueryResult;
+            // Support both old shape (bare QueryResult) and new shape ({ data, meta })
+            const queryResult: QueryResult = (payload && typeof payload === "object" && "data" in payload && "meta" in payload)
+              ? (payload as { data: QueryResult }).data
+              : (payload as QueryResult);
+            const metaStats = (payload && typeof payload === "object" && "meta" in payload)
+              ? (payload as { meta: Record<string, unknown> }).meta
+              : undefined;
+
             batch(() => {
-              result.value = (data as QueryResult) ?? null;
+              result.value = queryResult ?? null;
               stats.value = {
                 took_ms: elapsedMs.value,
-                scanned: 0,
+                scanned: (metaStats?.rows_scanned as number) ?? 0,
                 query_id: jobId,
+                stats: metaStats
+                  ? {
+                      segments_total:      (metaStats.segments_total as number) ?? 0,
+                      segments_scanned:    (metaStats.segments_scanned as number) ?? 0,
+                      segments_skipped_bf: (metaStats.segments_skipped_bf as number) ?? 0,
+                      rows_scanned:        (metaStats.rows_scanned as number) ?? 0,
+                      took_ms:             elapsedMs.value,
+                    }
+                  : undefined,
               };
               progressData.value = null;
               queryActive.value = false;
