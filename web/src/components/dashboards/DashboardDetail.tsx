@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { route } from "preact-router";
 import { GridStack } from "gridstack";
 import "gridstack/dist/gridstack.min.css";
-import type { DashboardPanel, DashboardSummary } from "../../api/client";
+import type { DashboardPanel, DashboardSummary, DashboardVariable } from "../../api/client";
 import {
   fetchDashboard,
   createDashboard,
@@ -12,6 +12,8 @@ import {
 import { DashboardHeader } from "./DashboardHeader";
 import { PanelRenderer } from "./PanelRenderer";
 import { PanelEditForm } from "./PanelEditForm";
+import { VariableBar } from "./VariableBar";
+import { VariableEditor } from "./VariableEditor";
 import styles from "./DashboardDetail.module.css";
 
 interface DashboardDetailProps {
@@ -32,7 +34,9 @@ export function DashboardDetail({
   const [refreshTick, setRefreshTick] = useState(0);
   const [dashName, setDashName] = useState("");
   const [unsavedPanels, setUnsavedPanels] = useState<DashboardPanel[]>([]);
-  const [variables] = useState<Record<string, string>>({});
+  const [unsavedVariables, setUnsavedVariables] = useState<DashboardVariable[]>([]);
+  const [variableValues, setVariableValues] = useState<Record<string, string>>({});
+  const [showVariableEditor, setShowVariableEditor] = useState(false);
   const [showPanelForm, setShowPanelForm] = useState(false);
   const [editingPanel, setEditingPanel] = useState<DashboardPanel | null>(null);
 
@@ -56,6 +60,13 @@ export function DashboardDetail({
         setDashboard(d);
         setDashName(d.name);
         setUnsavedPanels(d.panels);
+        setUnsavedVariables(d.variables ?? []);
+        // Initialize variable values from defaults
+        const initVals: Record<string, string> = {};
+        for (const v of d.variables ?? []) {
+          initVals[v.name] = v.default ?? "*";
+        }
+        setVariableValues(initVals);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -149,6 +160,23 @@ export function DashboardDetail({
     setRefreshTick((t) => t + 1);
   }, []);
 
+  // Handle variable value change from VariableBar
+  function handleVariableChange(name: string, value: string) {
+    setVariableValues((prev) => ({ ...prev, [name]: value }));
+    setRefreshTick((t) => t + 1);
+  }
+
+  // Build filtered variables for query execution (exclude "*" or empty values)
+  const activeVariables: Record<string, string> = {};
+  for (const [k, v] of Object.entries(variableValues)) {
+    if (v && v !== "*") {
+      activeVariables[k] = v;
+    }
+  }
+
+  // The variables to show in the bar (from unsaved in edit mode, or from dashboard)
+  const displayVariables = editMode ? unsavedVariables : (dashboard?.variables ?? unsavedVariables);
+
   // Save handler
   async function handleSave() {
     if (!dashName.trim() || unsavedPanels.length === 0) return;
@@ -156,12 +184,13 @@ export function DashboardDetail({
       const input = {
         name: dashName.trim(),
         panels: unsavedPanels,
-        variables: dashboard?.variables,
+        variables: unsavedVariables.length > 0 ? unsavedVariables : undefined,
       };
       if (dashboardId && dashboard) {
         await updateDashboard(dashboardId, input);
         setDashboard({ ...dashboard, ...input });
         setEditMode(false);
+        setShowVariableEditor(false);
       } else {
         const created = await createDashboard(input);
         route(`/dashboards/${created.id}`);
@@ -175,8 +204,10 @@ export function DashboardDetail({
     if (dashboard) {
       setUnsavedPanels(dashboard.panels);
       setDashName(dashboard.name);
+      setUnsavedVariables(dashboard.variables ?? []);
     }
     setEditMode(false);
+    setShowVariableEditor(false);
   }
 
   function handleAddPanel() {
@@ -294,7 +325,24 @@ export function DashboardDetail({
         onDiscard={handleDiscard}
         saveDisabled={saveDisabled}
         onDelete={dashboardId ? handleDeleteDashboard : undefined}
+        onToggleVariables={() => setShowVariableEditor((v) => !v)}
+        showVariableEditor={showVariableEditor}
       />
+
+      {editMode && showVariableEditor && (
+        <VariableEditor
+          variables={unsavedVariables}
+          onChange={setUnsavedVariables}
+        />
+      )}
+
+      {displayVariables.length > 0 && (
+        <VariableBar
+          variables={displayVariables}
+          values={variableValues}
+          onChange={handleVariableChange}
+        />
+      )}
 
       <div class={styles.gridArea}>
         {unsavedPanels.length === 0 && editMode && (
@@ -319,7 +367,7 @@ export function DashboardDetail({
                   <PanelRenderer
                     panel={panel}
                     from={from}
-                    variables={variables}
+                    variables={activeVariables}
                     refreshTick={refreshTick}
                     editMode={editMode}
                     onEdit={() => handleEditPanel(panel)}
