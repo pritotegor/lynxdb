@@ -65,6 +65,7 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 
 		return
 	}
+	query = substituteVariables(query, req.Variables)
 	if !s.checkQueryLength(w, query) {
 		return
 	}
