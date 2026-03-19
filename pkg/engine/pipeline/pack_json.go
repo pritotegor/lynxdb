@@ -137,13 +137,17 @@ func packValueToInterface(v event.Value) interface{} {
 	case event.FieldTypeNull:
 		return nil
 	case event.FieldTypeBool:
-		return v.AsBool()
+		b, _ := v.TryAsBool()
+		return b
 	case event.FieldTypeInt:
-		return v.AsInt()
+		n, _ := v.TryAsInt()
+		return n
 	case event.FieldTypeFloat:
-		return v.AsFloat()
+		f, _ := v.TryAsFloat()
+		return f
 	case event.FieldTypeString:
-		return v.AsString()
+		s, _ := v.TryAsString()
+		return s
 	default:
 		return v.String()
 	}

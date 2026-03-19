@@ -200,9 +200,11 @@ func valFloat(e *event.Event, field string) (float64, bool) {
 	}
 	switch v.Type() {
 	case event.FieldTypeFloat:
-		return v.AsFloat(), true
+		f, _ := v.TryAsFloat()
+		return f, true
 	case event.FieldTypeInt:
-		return float64(v.AsInt()), true
+		n, _ := v.TryAsInt()
+		return float64(n), true
 	default:
 		f, err := strconv.ParseFloat(v.String(), 64)
 		if err != nil {

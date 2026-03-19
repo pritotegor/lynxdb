@@ -133,14 +133,17 @@ func (e *Engine) SubmitQuery(ctx context.Context, params QueryParams) (*SearchJo
 	// Detach() closes detachCh, stopping propagation so the job survives
 	// client disconnect after sync→async promotion.
 	//
-	// If MaxQueryRuntime is configured, enforce a hard deadline so no query
-	// can run unbounded (E4: query timeout enforcement).
+	// Always enforce a hard deadline so no query can run unbounded.
+	// Uses MaxQueryRuntime from config, falling back to a 10-minute safety
+	// net when the config value is 0 (prevents runaway queries from
+	// exhausting memory, CPU, and file descriptors indefinitely).
+	const defaultMaxQueryRuntime = 10 * time.Minute
 	var jobCtx context.Context
 	var jobCancel context.CancelFunc
 	if maxRT := e.queryCfg.MaxQueryRuntime; maxRT > 0 {
 		jobCtx, jobCancel = context.WithTimeout(context.Background(), maxRT)
 	} else {
-		jobCtx, jobCancel = context.WithCancel(context.Background())
+		jobCtx, jobCancel = context.WithTimeout(context.Background(), defaultMaxQueryRuntime)
 	}
 	job.cancel = jobCancel
 
@@ -536,8 +539,10 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		)
 	}
 
-	// Store in cache.
-	_ = e.cache.Put(context.Background(), cacheKey, resultRowsToCachedResult(qr.rows))
+	// Store in cache (non-fatal; log failures for observability).
+	if err := e.cache.Put(context.Background(), cacheKey, resultRowsToCachedResult(qr.rows)); err != nil {
+		logger.Debug("cache put failed", "error", err)
+	}
 }
 
 // queryAnnotations holds pre-extracted optimizer annotations from the AST.

@@ -85,11 +85,13 @@ func (b *BinIterator) Next(ctx context.Context) (*Batch, error) {
 		var ts time.Time
 		switch v.Type() {
 		case event.FieldTypeTimestamp:
-			ts = v.AsTimestamp()
+			ts, _ = v.TryAsTimestamp()
 		case event.FieldTypeInt:
-			ts = time.Unix(0, v.AsInt())
+			n, _ := v.TryAsInt()
+			ts = time.Unix(0, n)
 		case event.FieldTypeString:
-			parsed, ok := tryParseTimestamp(v.AsString())
+			s, _ := v.TryAsString()
+			parsed, ok := tryParseTimestamp(s)
 			if !ok {
 				aliasCol[i] = v
 

@@ -189,7 +189,7 @@ func (f *FilterIterator) tryVectorizedFilter(batch *Batch) (*Batch, bool) {
 		intCol := make([]int64, len(col))
 		for i, v := range col {
 			if !v.IsNull() {
-				intCol[i] = v.AsInt()
+				intCol[i], _ = v.TryAsInt()
 			}
 		}
 		switch f.vecOp {
@@ -216,7 +216,7 @@ func (f *FilterIterator) tryVectorizedFilter(batch *Batch) (*Batch, bool) {
 		fCol := make([]float64, len(col))
 		for i, v := range col {
 			if !v.IsNull() {
-				fCol[i] = v.AsFloat()
+				fCol[i], _ = v.TryAsFloat()
 			}
 		}
 		switch f.vecOp {
@@ -239,7 +239,7 @@ func (f *FilterIterator) tryVectorizedFilter(batch *Batch) (*Batch, bool) {
 		sCol := make([]string, len(col))
 		for i, v := range col {
 			if !v.IsNull() {
-				sCol[i] = v.AsString()
+				sCol[i], _ = v.TryAsString()
 			}
 		}
 		switch f.vecOp {

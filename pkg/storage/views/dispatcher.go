@@ -822,7 +822,8 @@ func deserializePartialState(ev *event.Event, fn pipeline.PartialAggFunc) pipeli
 	case aggFnDC:
 		if v, ok := ev.Fields[prefix+"dc_set"]; ok && !v.IsNull() {
 			var vals []string
-			if err := json.Unmarshal([]byte(v.AsString()), &vals); err == nil {
+			str, _ := v.TryAsString()
+			if err := json.Unmarshal([]byte(str), &vals); err == nil {
 				s.DistinctSet = make(map[string]bool, len(vals))
 				for _, val := range vals {
 					s.DistinctSet[val] = true
@@ -843,9 +844,11 @@ func deserializePartialState(ev *event.Event, fn pipeline.PartialAggFunc) pipeli
 func toInt64(v event.Value) int64 {
 	switch v.Type() {
 	case event.FieldTypeInt:
-		return v.AsInt()
+		n, _ := v.TryAsInt()
+		return n
 	case event.FieldTypeFloat:
-		return int64(v.AsFloat())
+		f, _ := v.TryAsFloat()
+		return int64(f)
 	default:
 		return 0
 	}
@@ -855,9 +858,11 @@ func toInt64(v event.Value) int64 {
 func toFloat64(v event.Value) float64 {
 	switch v.Type() {
 	case event.FieldTypeFloat:
-		return v.AsFloat()
+		f, _ := v.TryAsFloat()
+		return f
 	case event.FieldTypeInt:
-		return float64(v.AsInt())
+		n, _ := v.TryAsInt()
+		return float64(n)
 	default:
 		return 0
 	}
@@ -921,8 +926,8 @@ func rowsToEvents(rows []map[string]event.Value, viewName string) []*event.Event
 func mapBuiltinField(ev *event.Event, k string, v event.Value) {
 	switch k {
 	case "_time":
-		if v.Type() == event.FieldTypeTimestamp {
-			ev.Time = v.AsTimestamp()
+		if t, ok := v.TryAsTimestamp(); ok {
+			ev.Time = t
 		}
 	case "_raw":
 		ev.Raw = v.String()

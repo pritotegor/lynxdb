@@ -28,6 +28,14 @@ var ErrInvalidBytecode = errors.New("vm: invalid bytecode")
 
 // VM is a stack-based virtual machine for evaluating SPL2 expressions.
 // The VM is designed to be reused across events with zero allocations on the hot path.
+//
+// NOTE: This file intentionally uses the deprecated As*() methods (AsInt, AsFloat,
+// AsString, AsBool, AsTimestamp) instead of the error-returning As*E() variants.
+// All calls occur within type-dispatched opcodes (OpAddInt, OpSubInt, etc.) or
+// inside switch v.Type() blocks where the value type is statically guaranteed by
+// the compiler. Adding error branches on the hot path would regress the 22ns/op
+// benchmark for no safety benefit. If a type mismatch occurs here, it indicates a
+// compiler bug — a panic is the correct response.
 type VM struct {
 	stack        [StackSize]event.Value
 	sp           int

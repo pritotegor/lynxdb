@@ -417,7 +417,9 @@ func (s *Server) Start(ctx context.Context) error {
 	ln, err := lc.Listen(ctx, "tcp", s.httpServer.Addr)
 	if err != nil {
 		// Engine was started but we can't listen — shut it down.
-		_ = s.engine.Shutdown(5 * time.Second)
+		if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
+			slog.Error("engine shutdown failed after listen error", "error", shutErr)
+		}
 		return fmt.Errorf("api: listen: %w", err)
 	}
 

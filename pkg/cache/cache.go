@@ -73,12 +73,14 @@ type CachedResult struct {
 
 // Stats tracks cache performance.
 type Stats struct {
-	Hits       int64
-	Misses     int64
-	Evictions  int64
-	SizeBytes  int64
-	EntryCount int64
-	HitRate    float64
+	Hits          int64
+	Misses        int64
+	Evictions     int64
+	SizeBytes     int64
+	EntryCount    int64
+	HitRate       float64
+	PoolFullDrops int64 // inserts dropped because unified pool was full
+	RemoveErrors  int64 // os.Remove failures during eviction
 }
 
 // PoolReserver abstracts the UnifiedPool interface for cache integration.
@@ -101,6 +103,10 @@ type Store struct {
 	misses      atomic.Int64
 	evictions   atomic.Int64
 	currentSize int64 // running total of entry sizes, updated under mu
+
+	// Observability counters for cache pressure and disk errors.
+	poolFullDrops    atomic.Int64 // inserts dropped because unified pool was full
+	removeErrors     atomic.Int64 // os.Remove failures during eviction
 
 	// pool is the optional unified memory pool. When non-nil, cache
 	// insertions call ReserveForCache and evictions call ReleaseCache.
@@ -206,6 +212,7 @@ func (cs *Store) Put(ctx context.Context, key Key, result *CachedResult) error {
 				// Pool has no room — drop the entry silently.
 				// Restore currentSize if we subtracted existing.
 				cs.currentSize += existingSize
+				cs.poolFullDrops.Add(1)
 				cs.mu.Unlock()
 				slog.Debug("cache: insert skipped, pool full",
 					"key", hex, "size_bytes", size)
@@ -236,7 +243,7 @@ func (cs *Store) Put(ctx context.Context, key Key, result *CachedResult) error {
 		delete(cs.entries, evicted)
 		cs.evictions.Add(1)
 		if cs.dir != "" {
-			os.Remove(cs.diskPath(evicted))
+			cs.removeDiskEntry(evicted)
 		}
 	}
 	cs.mu.Unlock()
@@ -281,7 +288,7 @@ func (cs *Store) EvictBytes(bytesNeeded int64) int64 {
 		delete(cs.entries, evictedKey)
 		cs.evictions.Add(1)
 		if cs.dir != "" {
-			os.Remove(cs.diskPath(evictedKey))
+			cs.removeDiskEntry(evictedKey)
 		}
 	}
 
@@ -356,12 +363,14 @@ func (cs *Store) Stats() Stats {
 	}
 
 	return Stats{
-		Hits:       hits,
-		Misses:     misses,
-		Evictions:  cs.evictions.Load(),
-		SizeBytes:  totalSize,
-		EntryCount: entryCount,
-		HitRate:    hitRate,
+		Hits:          hits,
+		Misses:        misses,
+		Evictions:     cs.evictions.Load(),
+		SizeBytes:     totalSize,
+		EntryCount:    entryCount,
+		HitRate:       hitRate,
+		PoolFullDrops: cs.poolFullDrops.Load(),
+		RemoveErrors:  cs.removeErrors.Load(),
 	}
 }
 
@@ -398,7 +407,7 @@ func (cs *Store) removeEntryLocked(hex string, entry *cacheEntry) {
 	cs.clock.remove(hex)
 	cs.evictions.Add(1)
 	if cs.dir != "" {
-		os.Remove(cs.diskPath(hex))
+		cs.removeDiskEntry(hex)
 	}
 }
 
@@ -420,7 +429,7 @@ func (cs *Store) evictIfNeeded() {
 		delete(cs.entries, evictedKey)
 		cs.evictions.Add(1)
 		if cs.dir != "" {
-			os.Remove(cs.diskPath(evictedKey))
+			cs.removeDiskEntry(evictedKey)
 		}
 	}
 }
@@ -433,6 +442,16 @@ func (cs *Store) diskPath(hex string) string {
 	prefix := hex[:2]
 
 	return filepath.Join(cs.dir, prefix, hex)
+}
+
+// removeDiskEntry removes the cached file from disk. Logs and counts
+// errors (except ENOENT, which is expected during concurrent eviction).
+func (cs *Store) removeDiskEntry(hex string) {
+	if err := os.Remove(cs.diskPath(hex)); err != nil && !os.IsNotExist(err) {
+		cs.removeErrors.Add(1)
+		slog.Warn("cache: failed to remove evicted entry",
+			"path", cs.diskPath(hex), "error", err)
+	}
 }
 
 func (cs *Store) writeToDisk(hex string, result *CachedResult) {

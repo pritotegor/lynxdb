@@ -11,14 +11,8 @@ import (
 // TestE2E_Persistence_DataSurvivesRestart ingests data to disk, restarts the
 // server, and verifies that all queries return identical results.
 //
-// BUG: This test exposes a real data loss bug in the persistence layer.
-// After restart, SSH events drop from 2000 to ~1000 and OpenStack events
-// drop from 2000 to 0. This means either:
-// (a) graceful shutdown does not flush the memtable to disk, or
-// (b) WAL recovery does not replay all entries, or
-// (c) segment files are not written/read correctly for all indexes.
-//
-// The application code must be fixed — do not modify this test to pass.
+// Regression test for persistence bug (fixed). Verifies memtable flush + WAL
+// recovery preserve all events across restart for multiple indexes.
 func TestE2E_Persistence_DataSurvivesRestart(t *testing.T) {
 	h := NewHarness(t, WithDisk())
 	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")

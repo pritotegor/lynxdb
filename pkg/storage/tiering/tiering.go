@@ -65,12 +65,14 @@ type TieredSegment struct {
 // Manager evaluates segment ages against index config and moves segments
 // between storage tiers.
 type Manager struct {
-	mu         sync.Mutex
-	segments   map[string]*TieredSegment // id -> segment
-	retryQueue map[string]*retryEntry    // id -> retry state for failed warm uploads
-	store      objstore.ObjectStore
-	logger     *slog.Logger
-	now        func() time.Time // injectable clock for testing
+	mu            sync.Mutex
+	segments      map[string]*TieredSegment // id -> segment
+	retryQueue    map[string]*retryEntry    // id -> retry state for failed warm uploads
+	store         objstore.ObjectStore
+	logger        *slog.Logger
+	now           func() time.Time // injectable clock for testing
+	verifyUploads bool             // when true, use CRC32 read-back verification via SafeUpload
+	pipeline      *UploadPipeline  // lazy-initialized when verifyUploads is true
 }
 
 // NewManager creates a new tiering manager.
@@ -81,6 +83,19 @@ func NewManager(store objstore.ObjectStore, logger *slog.Logger) *Manager {
 		store:      store,
 		logger:     logger,
 		now:        time.Now,
+	}
+}
+
+// SetVerifyUploads enables CRC32 read-back verification for S3 uploads.
+// When enabled, uploads use UploadPipeline.SafeUpload() which reads back
+// the uploaded object and verifies its CRC32 matches before marking the
+// segment as safe to delete locally. This doubles S3 GET cost per upload.
+func (m *Manager) SetVerifyUploads(enabled bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.verifyUploads = enabled
+	if enabled && m.pipeline == nil {
+		m.pipeline = NewUploadPipeline(m.store, UploadConfig{})
 	}
 }
 
@@ -148,13 +163,8 @@ func ClassifyTier(segCreated, now time.Time, cfg model.IndexConfig) Tier {
 
 // MoveToWarm uploads a segment's data to the object store with safety verification.
 // After upload, a HeadObject check confirms the object exists before updating the tier.
-// Returns the object key if successful.
-//
-// TODO(tiering): Integrate UploadPipeline.SafeUpload() here to add CRC32
-// read-back verification. Currently we rely on HeadObject existence check only.
-// The UploadPipeline is implemented (pipeline.go) but not wired in because
-// the read-back doubles S3 GET cost per upload. Integrate once we have metrics
-// showing upload corruption rates to justify the cost.
+// When verifyUploads is enabled, uses UploadPipeline.SafeUpload() for CRC32
+// read-back verification (doubles S3 GET cost per upload).
 func (m *Manager) MoveToWarm(ctx context.Context, id string, data []byte) error {
 	m.mu.Lock()
 	seg, ok := m.segments[id]
@@ -178,29 +188,52 @@ func (m *Manager) MoveToWarm(ctx context.Context, id string, data []byte) error 
 	m.mu.Unlock()
 
 	key := fmt.Sprintf("warm/%s/%s.lsg", seg.Meta.Index, id)
-	if err := m.store.Put(ctx, key, data); err != nil {
-		// Revert to hot on failure, but re-check the segment still exists.
-		m.mu.Lock()
-		if s, ok := m.segments[id]; ok {
-			s.Tier = TierHot
+
+	// Upload with optional CRC32 read-back verification.
+	if m.verifyUploads && m.pipeline != nil {
+		safe, err := m.pipeline.SafeUpload(ctx, key, data)
+		if err != nil {
+			m.mu.Lock()
+			if s, ok := m.segments[id]; ok {
+				s.Tier = TierHot
+			}
+			m.enqueueRetryLocked(id)
+			m.mu.Unlock()
+
+			return fmt.Errorf("tiering: safe upload to warm: %w", err)
 		}
-		// Enqueue for retry with exponential backoff.
-		m.enqueueRetryLocked(id)
-		m.mu.Unlock()
+		if !safe {
+			m.mu.Lock()
+			if s, ok := m.segments[id]; ok {
+				s.Tier = TierHot
+			}
+			m.mu.Unlock()
 
-		return fmt.Errorf("tiering: upload to warm: %w", err)
-	}
-
-	// Verify: HeadObject check after upload.
-	exists, err := m.store.Exists(ctx, key)
-	if err != nil || !exists {
-		m.mu.Lock()
-		if s, ok := m.segments[id]; ok {
-			s.Tier = TierHot
+			return fmt.Errorf("tiering: CRC32 verification failed for %s", key)
 		}
-		m.mu.Unlock()
+	} else {
+		if err := m.store.Put(ctx, key, data); err != nil {
+			m.mu.Lock()
+			if s, ok := m.segments[id]; ok {
+				s.Tier = TierHot
+			}
+			m.enqueueRetryLocked(id)
+			m.mu.Unlock()
 
-		return fmt.Errorf("tiering: HeadObject verification failed for %s: exists=%v: %w", key, exists, err)
+			return fmt.Errorf("tiering: upload to warm: %w", err)
+		}
+
+		// Verify: HeadObject check after upload.
+		exists, err := m.store.Exists(ctx, key)
+		if err != nil || !exists {
+			m.mu.Lock()
+			if s, ok := m.segments[id]; ok {
+				s.Tier = TierHot
+			}
+			m.mu.Unlock()
+
+			return fmt.Errorf("tiering: HeadObject verification failed for %s: exists=%v: %w", key, exists, err)
+		}
 	}
 
 	m.mu.Lock()

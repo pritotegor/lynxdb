@@ -45,13 +45,9 @@ func TestContract_EnvConfig_Empty(t *testing.T) {
 }
 
 func TestContract_NoColor_EnvVar(t *testing.T) {
-	// BUG: This test exposes a real bug in ensureThemeInit() / renderError().
-	// Expected: NO_COLOR=1 suppresses ANSI escape sequences in error output.
-	// Actual: ANSI escapes are emitted because ensureThemeInit() calls
-	//   ui.Init(globalNoColor) where globalNoColor is still false — cobra's
-	//   OnInitialize hasn't run yet when early errors occur (e.g., parse errors).
-	//   The NO_COLOR env var is not checked independently of the flag.
-	// The application code must be fixed — do not modify this test to pass.
+	// Regression: NO_COLOR=1 must suppress ANSI escape sequences in error output.
+	// Previously ensureThemeInit() did not check the env var independently of
+	// the cobra flag, causing ANSI escapes on early error paths.
 
 	r := runLynxDBWithEnv(t,
 		map[string]string{"NO_COLOR": "1"},
@@ -66,11 +62,7 @@ func TestContract_NoColor_EnvVar(t *testing.T) {
 }
 
 func TestContract_NoColor_Flag(t *testing.T) {
-	// BUG: Same root cause as TestContract_NoColor_EnvVar.
-	// Expected: --no-color flag suppresses ANSI escape sequences.
-	// Actual: ANSI escapes still emitted because ensureThemeInit() runs before
-	//   cobra parses the --no-color flag on early error paths.
-	// The application code must be fixed — do not modify this test to pass.
+	// Regression: --no-color flag must suppress ANSI escape sequences.
 
 	r := runLynxDB(t, "--no-color", "query", "--file", testdataLog("access.log"), "| where")
 

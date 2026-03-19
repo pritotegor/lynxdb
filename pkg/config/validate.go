@@ -257,6 +257,9 @@ func (i *IngestConfig) validate() error {
 	if i.MaxBatchSize < 1 {
 		return validationErr("ingest", "max_batch_size", fmt.Sprintf("%d", i.MaxBatchSize), "must be at least 1")
 	}
+	if i.MaxLineBytes < 1024 {
+		return validationErr("ingest", "max_line_bytes", fmt.Sprintf("%d", i.MaxLineBytes), "must be at least 1024 bytes")
+	}
 
 	return nil
 }

@@ -448,6 +448,17 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Ingest.MaxBatchSize) }},
+	{"LYNXDB_INGEST_MAX_LINE_BYTES", "ingest.max_line_bytes",
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.MaxLineBytes = n
+
+			return nil
+		},
+		func(c *Config) string { return strconv.Itoa(c.Ingest.MaxLineBytes) }},
 
 	// HTTP
 	{"LYNXDB_HTTP_IDLE_TIMEOUT", "http.idle_timeout",

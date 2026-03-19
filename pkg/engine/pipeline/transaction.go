@@ -182,8 +182,10 @@ func (t *TransactionIterator) materialize(ctx context.Context) error {
 }
 
 func getTime(row map[string]event.Value) time.Time {
-	if v, ok := row["_time"]; ok && v.Type() == event.FieldTypeTimestamp {
-		return v.AsTimestamp()
+	if v, ok := row["_time"]; ok {
+		if t, tok := v.TryAsTimestamp(); tok {
+			return t
+		}
 	}
 
 	return time.Time{}

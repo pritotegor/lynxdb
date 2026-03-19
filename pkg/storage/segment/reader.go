@@ -927,7 +927,8 @@ func (r *Reader) evalPredicatesOnEvent(ev *event.Event, preds []Predicate) bool 
 			if err != nil {
 				return false
 			}
-			if !evalInt64Predicate(val.AsInt(), pred.Op, int64(predValF)) {
+			n, _ := val.TryAsInt()
+			if !evalInt64Predicate(n, pred.Op, int64(predValF)) {
 				return false
 			}
 		case event.FieldTypeFloat:
@@ -935,7 +936,8 @@ func (r *Reader) evalPredicatesOnEvent(ev *event.Event, preds []Predicate) bool 
 			if err != nil {
 				return false
 			}
-			if !evalFloat64Predicate(val.AsFloat(), pred.Op, predVal) {
+			f, _ := val.TryAsFloat()
+			if !evalFloat64Predicate(f, pred.Op, predVal) {
 				return false
 			}
 		default:

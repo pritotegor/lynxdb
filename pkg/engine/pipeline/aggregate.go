@@ -277,9 +277,8 @@ func (a *AggregateIterator) estimateGroupBytes(row map[string]event.Value) int64
 	base := int64(len(a.groupBy))*estimatedKeyBytes + int64(len(a.aggs))*estimatedAggStateBytes
 	for _, g := range a.groupBy {
 		v, ok := row[g]
-		if ok && v.Type() == event.FieldTypeString {
-			s := v.AsString()
-			if len(s) > 8 {
+		if ok {
+			if s, ok := v.TryAsString(); ok && len(s) > 8 {
 				base += int64(len(s))
 			}
 		}
@@ -358,26 +357,34 @@ func (a *AggregateIterator) groupKeyHash(row map[string]event.Value) uint64 {
 		switch v.Type() {
 		case event.FieldTypeString:
 			h.Write([]byte{1})
-			h.Write([]byte(v.AsString()))
+			if s, ok := v.TryAsString(); ok {
+				h.Write([]byte(s))
+			}
 		case event.FieldTypeInt:
 			h.Write([]byte{2})
-			binary.LittleEndian.PutUint64(buf[:], uint64(v.AsInt()))
-			h.Write(buf[:])
+			if n, ok := v.TryAsInt(); ok {
+				binary.LittleEndian.PutUint64(buf[:], uint64(n))
+				h.Write(buf[:])
+			}
 		case event.FieldTypeFloat:
 			h.Write([]byte{3})
-			binary.LittleEndian.PutUint64(buf[:], math.Float64bits(v.AsFloat()))
-			h.Write(buf[:])
+			if f, ok := v.TryAsFloat(); ok {
+				binary.LittleEndian.PutUint64(buf[:], math.Float64bits(f))
+				h.Write(buf[:])
+			}
 		case event.FieldTypeBool:
 			h.Write([]byte{4})
-			if v.AsBool() {
+			if b, ok := v.TryAsBool(); ok && b {
 				h.Write([]byte{1})
 			} else {
 				h.Write([]byte{0})
 			}
 		case event.FieldTypeTimestamp:
 			h.Write([]byte{5})
-			binary.LittleEndian.PutUint64(buf[:], uint64(v.AsTimestamp().UnixNano()))
-			h.Write(buf[:])
+			if t, ok := v.TryAsTimestamp(); ok {
+				binary.LittleEndian.PutUint64(buf[:], uint64(t.UnixNano()))
+				h.Write(buf[:])
+			}
 		default:
 			h.Write([]byte{0})
 		}
@@ -833,7 +840,8 @@ func (a *AggregateIterator) mergeSpilledValue(s *aggState, fn string, val event.
 func (a *AggregateIterator) mergeDCFromRow(s *aggState, row map[string]event.Value, alias string) {
 	// Try HLL binary first.
 	if hllVal, ok := row[alias+"__hll"]; ok && !hllVal.IsNull() {
-		data, err := decodeBase64(hllVal.AsString())
+		hllStr, _ := hllVal.TryAsString()
+		data, err := decodeBase64(hllStr)
 		if err == nil {
 			other := UnmarshalHyperLogLog(data)
 			if other != nil {
@@ -853,7 +861,8 @@ func (a *AggregateIterator) mergeDCFromRow(s *aggState, row map[string]event.Val
 	}
 	// Try exact set.
 	if dcvalsVal, ok := row[alias+"__dcvals"]; ok && !dcvalsVal.IsNull() {
-		parts := strings.Split(dcvalsVal.AsString(), "|")
+		dcStr, _ := dcvalsVal.TryAsString()
+		parts := strings.Split(dcStr, "|")
 		for _, p := range parts {
 			if p == "" {
 				continue
@@ -884,7 +893,8 @@ func (a *AggregateIterator) mergeValuesFromRow(s *aggState, row map[string]event
 	if !ok || valsVal.IsNull() {
 		return
 	}
-	parts := strings.Split(valsVal.AsString(), "|||")
+	valsStr, _ := valsVal.TryAsString()
+	parts := strings.Split(valsStr, "|||")
 	for _, p := range parts {
 		if p == "" {
 			continue
@@ -954,7 +964,8 @@ func (a *AggregateIterator) mergePercFromRow(s *aggState, row map[string]event.V
 	merged := false
 	// Try t-digest binary first.
 	if tdVal, ok := row[alias+"__tdigest"]; ok && !tdVal.IsNull() {
-		data, err := decodeBase64(tdVal.AsString())
+		tdStr, _ := tdVal.TryAsString()
+		data, err := decodeBase64(tdStr)
 		if err == nil {
 			other := UnmarshalTDigest(data)
 			if other != nil {
@@ -969,7 +980,8 @@ func (a *AggregateIterator) mergePercFromRow(s *aggState, row map[string]event.V
 	// Try raw float values.
 	if !merged {
 		if pvVal, ok := row[alias+"__percvals"]; ok && !pvVal.IsNull() {
-			floats := parseFloatList(pvVal.AsString(), "|")
+			pvStr, _ := pvVal.TryAsString()
+			floats := parseFloatList(pvStr, "|")
 			if s.tdigest == nil {
 				s.tdigest = NewTDigest(100)
 			}

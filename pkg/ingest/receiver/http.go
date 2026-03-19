@@ -131,10 +131,12 @@ func (r *HTTPReceiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "ok",
 		"count":  len(events),
-	})
+	}); err != nil {
+		slog.Debug("receiver: failed to write JSON response", "error", err)
+	}
 }
 
 // POST /api/v1/ingest/raw — newline-delimited raw logs (streaming).
@@ -196,10 +198,12 @@ func (r *HTTPReceiver) handleRawEvents(w http.ResponseWriter, req *http.Request)
 	}
 
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "ok",
 		"count":  total,
-	})
+	}); err != nil {
+		slog.Debug("receiver: failed to write JSON response", "error", err)
+	}
 }
 
 // POST /api/v1/ingest/hec — Splunk HEC compatible endpoint (streaming).
@@ -254,14 +258,18 @@ func (r *HTTPReceiver) handleHEC(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"text": "Success",
 		"code": 0,
-	})
+	}); err != nil {
+		slog.Debug("receiver: failed to write HEC response", "error", err)
+	}
 }
 
 func (r *HTTPReceiver) handleHealth(w http.ResponseWriter, req *http.Request) {
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "healthy"}); err != nil {
+		slog.Debug("receiver: failed to write health response", "error", err)
+	}
 }
 
 func (r *HTTPReceiver) processAndWrite(events []*event.Event) error {

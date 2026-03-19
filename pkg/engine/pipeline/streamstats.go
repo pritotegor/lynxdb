@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strings"
 
@@ -121,10 +122,14 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 			rb = newRingBuffer(s.window)
 			s.ringBufs[key] = rb
 			// Track ring buffer struct + map entry + key string overhead.
-			_ = s.acct.Grow(estimatedRingBufferOverhead + int64(len(key)))
+			if err := s.acct.Grow(estimatedRingBufferOverhead + int64(len(key))); err != nil {
+				return nil, fmt.Errorf("streamstats: memory budget exceeded (ring buffer alloc): %w", err)
+			}
 			// Pre-allocated slots for bounded windows.
 			if rb.capacity > 0 {
-				_ = s.acct.Grow(int64(rb.capacity) * estimatedRowBytes)
+				if err := s.acct.Grow(int64(rb.capacity) * estimatedRowBytes); err != nil {
+					return nil, fmt.Errorf("streamstats: memory budget exceeded (window pre-alloc): %w", err)
+				}
 			}
 		}
 
@@ -133,7 +138,9 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 			// window not yet full, track the new slot. At capacity, the add
 			// replaces an existing slot — memory-neutral.
 			if rb.capacity == 0 || rb.count < rb.capacity {
-				_ = s.acct.Grow(estimatedRowBytes)
+				if err := s.acct.Grow(estimatedRowBytes); err != nil {
+					return nil, fmt.Errorf("streamstats: memory budget exceeded (current window grow): %w", err)
+				}
 			}
 			rb.add(row)
 		}
@@ -151,7 +158,9 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 
 		if !s.current {
 			if rb.capacity == 0 || rb.count < rb.capacity {
-				_ = s.acct.Grow(estimatedRowBytes)
+				if err := s.acct.Grow(estimatedRowBytes); err != nil {
+					return nil, fmt.Errorf("streamstats: memory budget exceeded (trailing window grow): %w", err)
+				}
 			}
 			rb.add(row)
 		}

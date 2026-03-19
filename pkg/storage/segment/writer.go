@@ -414,8 +414,8 @@ func (sw *Writer) writeRowGroup(events []*event.Event, fieldSet map[string]event
 			for i, e := range events {
 				v := e.GetField(name)
 				if !v.IsNull() {
-					if v.Type() == event.FieldTypeString {
-						values[i] = v.AsString()
+					if s, ok := v.TryAsString(); ok {
+						values[i] = s
 					} else {
 						values[i] = v.String()
 					}
@@ -444,11 +444,17 @@ func (sw *Writer) writeRowGroup(events []*event.Event, fieldSet map[string]event
 				}
 				switch v.Type() {
 				case event.FieldTypeTimestamp:
-					values[i] = v.AsTimestamp().UnixNano()
+					if t, ok := v.TryAsTimestamp(); ok {
+						values[i] = t.UnixNano()
+					}
 				case event.FieldTypeFloat:
-					values[i] = int64(v.AsFloat())
+					if f, ok := v.TryAsFloat(); ok {
+						values[i] = int64(f)
+					}
 				case event.FieldTypeInt:
-					values[i] = v.AsInt()
+					if n, ok := v.TryAsInt(); ok {
+						values[i] = n
+					}
 				}
 			}
 			chunk, err = sw.writeInt64Chunk(name, values)
@@ -461,9 +467,13 @@ func (sw *Writer) writeRowGroup(events []*event.Event, fieldSet map[string]event
 				}
 				switch v.Type() {
 				case event.FieldTypeInt:
-					values[i] = float64(v.AsInt())
+					if n, ok := v.TryAsInt(); ok {
+						values[i] = float64(n)
+					}
 				case event.FieldTypeFloat:
-					values[i] = v.AsFloat()
+					if f, ok := v.TryAsFloat(); ok {
+						values[i] = f
+					}
 				}
 			}
 			chunk, err = sw.writeFloat64Chunk(name, values)
@@ -471,7 +481,7 @@ func (sw *Writer) writeRowGroup(events []*event.Event, fieldSet map[string]event
 			values := make([]int64, len(events))
 			for i, e := range events {
 				v := e.GetField(name)
-				if !v.IsNull() && v.Type() == event.FieldTypeBool && v.AsBool() {
+				if b, ok := v.TryAsBool(); ok && b {
 					values[i] = 1
 				}
 			}

@@ -223,7 +223,11 @@ func (s *StreamingServerStore) GetEvents(index string) []*event.Event {
 	iter := s.GetEventIterator(index)
 	defer iter.Close()
 
-	_ = iter.Init(context.Background())
+	if err := iter.Init(context.Background()); err != nil {
+		slog.Warn("store: GetEvents iterator init failed, returning empty result set",
+			"index", index, "error", err)
+		return nil
+	}
 
 	var events []*event.Event
 	for {
@@ -363,7 +367,6 @@ func (e *Engine) buildSegmentSources(
 // the shared per-query budget. When nil, standalone enforcement uses queryCfg.MaxQueryMemory.
 func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, onProgress func(*SearchProgress), monitor *stats.BudgetMonitor, traceSegments ...bool) (map[string][]*event.Event, storeStats, error) {
 	trace := len(traceSegments) > 0 && traceSegments[0]
-	_ = trace
 
 	// Flush buffered events so they are visible to the query scan.
 	// BufferedEvents() is a single lock+counter check — negligible overhead.
@@ -1629,7 +1632,6 @@ func readSegmentColumnar(
 // which reads row groups on-demand and allows operators to spill to disk.
 func (e *Engine) buildColumnarStore(ctx context.Context, hints *spl2.QueryHints, onProgress func(*SearchProgress), monitor *stats.BudgetMonitor, traceSegments ...bool) (map[string][]*enginepipeline.Batch, storeStats, error) {
 	trace := len(traceSegments) > 0 && traceSegments[0]
-	_ = trace
 
 	// Flush buffered events so they are visible to the query scan.
 	if e.batcher != nil && e.batcher.BufferedEvents() > 0 {

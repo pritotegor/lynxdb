@@ -380,7 +380,7 @@ func extractInt64Column(col []event.Value) ([]int64, []bool) {
 		if v.IsNull() {
 			nulls[i] = true
 		} else {
-			out[i] = v.AsInt()
+			out[i], _ = v.TryAsInt()
 		}
 	}
 	return out, nulls
@@ -395,7 +395,7 @@ func extractFloat64Column(col []event.Value) ([]float64, []bool) {
 		if v.IsNull() {
 			nulls[i] = true
 		} else {
-			out[i] = v.AsFloat()
+			out[i], _ = v.TryAsFloat()
 		}
 	}
 	return out, nulls
@@ -410,7 +410,7 @@ func extractStringColumn(col []event.Value) ([]string, []bool) {
 		if v.IsNull() {
 			nulls[i] = true
 		} else {
-			out[i] = v.AsString()
+			out[i], _ = v.TryAsString()
 		}
 	}
 	return out, nulls

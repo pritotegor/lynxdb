@@ -142,6 +142,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	// Ingest.
 	add("ingest.max_body_size", cfg.Ingest.MaxBodySize.String(), dflt.Ingest.MaxBodySize.String(), fileCfg.Ingest.MaxBodySize.String(), "LYNXDB_INGEST_MAX_BODY_SIZE")
 	add("ingest.max_batch_size", fmt.Sprintf("%d", cfg.Ingest.MaxBatchSize), fmt.Sprintf("%d", dflt.Ingest.MaxBatchSize), fmt.Sprintf("%d", fileCfg.Ingest.MaxBatchSize), "LYNXDB_INGEST_MAX_BATCH_SIZE")
+	add("ingest.max_line_bytes", fmt.Sprintf("%d", cfg.Ingest.MaxLineBytes), fmt.Sprintf("%d", dflt.Ingest.MaxLineBytes), fmt.Sprintf("%d", fileCfg.Ingest.MaxLineBytes), "LYNXDB_INGEST_MAX_LINE_BYTES")
 	add("ingest.fsync", formatBoolPtr(cfg.Ingest.FSync), formatBoolPtr(dflt.Ingest.FSync), formatBoolPtr(fileCfg.Ingest.FSync), "LYNXDB_INGEST_FSYNC")
 	add("ingest.dedup_enabled", strconv.FormatBool(cfg.Ingest.DedupEnabled), strconv.FormatBool(dflt.Ingest.DedupEnabled), strconv.FormatBool(fileCfg.Ingest.DedupEnabled), "LYNXDB_INGEST_DEDUP_ENABLED")
 	add("ingest.dedup_capacity", strconv.Itoa(cfg.Ingest.DedupCapacity), strconv.Itoa(dflt.Ingest.DedupCapacity), strconv.Itoa(fileCfg.Ingest.DedupCapacity), "LYNXDB_INGEST_DEDUP_CAPACITY")

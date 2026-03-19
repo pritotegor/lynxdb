@@ -3,6 +3,7 @@ package stats
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 )
 
@@ -190,8 +191,10 @@ func (m *BudgetMonitor) ObserveGrow(n int64) {
 	m.mu.Unlock()
 }
 
-// ObserveShrink reverses a previous ObserveGrow call. Panics if n exceeds
-// curAllocated — this indicates unbalanced Grow/Shrink in the caller.
+// ObserveShrink reverses a previous ObserveGrow call. If n exceeds
+// curAllocated (indicating unbalanced Grow/Shrink), clamps to zero and
+// logs a warning instead of panicking — this prevents corrupt monitor
+// state from crashing the process.
 // Thread-safe. Nil-safe: no-op if monitor is nil.
 func (m *BudgetMonitor) ObserveShrink(n int64) {
 	if m == nil || n <= 0 {
@@ -199,8 +202,11 @@ func (m *BudgetMonitor) ObserveShrink(n int64) {
 	}
 	m.mu.Lock()
 	if n > m.curAllocated {
+		slog.Error("BudgetMonitor.ObserveShrink: underflow detected, clamping to zero",
+			"shrink", n, "curAllocated", m.curAllocated, "label", m.label)
+		m.curAllocated = 0
 		m.mu.Unlock()
-		panic(fmt.Sprintf("BudgetMonitor.ObserveShrink(%d) exceeds curAllocated(%d)", n, m.curAllocated))
+		return
 	}
 	m.curAllocated -= n
 	m.mu.Unlock()

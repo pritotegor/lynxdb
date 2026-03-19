@@ -162,13 +162,16 @@ func eventValueToInterface(v event.Value) interface{} {
 	case event.FieldTypeNull:
 		return nil
 	case event.FieldTypeBool:
-		return v.AsBool()
+		b, _ := v.TryAsBool()
+		return b
 	case event.FieldTypeInt:
-		return v.AsInt()
+		n, _ := v.TryAsInt()
+		return n
 	case event.FieldTypeFloat:
-		return v.AsFloat()
+		f, _ := v.TryAsFloat()
+		return f
 	case event.FieldTypeString:
-		s := v.AsString()
+		s, _ := v.TryAsString()
 		// Try to preserve numeric types for string-encoded numbers
 		// so json_object("age", "30") produces {"age":30} not {"age":"30"}.
 		if n, err := strconv.ParseInt(s, 10, 64); err == nil {

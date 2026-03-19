@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -495,9 +496,12 @@ func (s *SortIterator) spillCurrentRun() error {
 
 	for _, row := range s.rows {
 		if err := sw.WriteRow(row); err != nil {
-			_ = sw.CloseFile()
+			closeErr := sw.CloseFile()
 
-			return fmt.Errorf("sort.spillCurrentRun: write: %w", err)
+			return errors.Join(
+				fmt.Errorf("sort.spillCurrentRun: write: %w", err),
+				closeErr,
+			)
 		}
 	}
 

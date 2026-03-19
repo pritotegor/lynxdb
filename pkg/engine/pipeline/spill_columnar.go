@@ -737,11 +737,14 @@ func encodeColumnValues(values []event.Value, _ bool) (fieldType, encoding uint8
 			}
 			switch v.Type() {
 			case event.FieldTypeInt:
-				ints[i] = v.AsInt()
+				n, _ := v.TryAsInt()
+				ints[i] = n
 			case event.FieldTypeTimestamp:
-				ints[i] = v.AsTimestamp().UnixNano()
+				t, _ := v.TryAsTimestamp()
+				ints[i] = t.UnixNano()
 			case event.FieldTypeBool:
-				if v.AsBool() {
+				b, _ := v.TryAsBool()
+				if b {
 					ints[i] = 1
 				}
 			default:
@@ -763,10 +766,10 @@ func encodeColumnValues(values []event.Value, _ bool) (fieldType, encoding uint8
 
 				continue
 			}
-			if v.Type() == event.FieldTypeFloat {
-				floats[i] = v.AsFloat()
-			} else if v.Type() == event.FieldTypeInt {
-				floats[i] = float64(v.AsInt())
+			if f, ok := v.TryAsFloat(); ok {
+				floats[i] = f
+			} else if n, ok := v.TryAsInt(); ok {
+				floats[i] = float64(n)
 			}
 		}
 		data, err = column.NewGorillaEncoder().EncodeFloat64s(floats)
@@ -784,8 +787,8 @@ func encodeColumnValues(values []event.Value, _ bool) (fieldType, encoding uint8
 
 				continue
 			}
-			if v.Type() == event.FieldTypeString {
-				strs[i] = v.AsString()
+			if s, ok := v.TryAsString(); ok {
+				strs[i] = s
 			} else {
 				// Mixed type: convert to string.
 				strs[i] = v.String()

@@ -116,9 +116,19 @@ func (r *BatcherReplicator) ReplicateBatch(
 	switch r.ackLevel {
 	case AckNone, AckOne:
 		// Fire-and-forget: send in goroutines, don't wait.
+		// Log failures at WARN level for observability — silent replication
+		// failures are invisible to operators otherwise.
 		for _, peer := range peers {
 			peer := peer
-			go r.sendToReplica(ctx, peer, peerAddrs[peer], shardID, entry)
+			go func() {
+				if err := r.sendToReplica(ctx, peer, peerAddrs[peer], shardID, entry); err != nil {
+					r.logger.Warn("async replication failed",
+						"shard_id", shardID,
+						"peer", peer,
+						"ack_level", r.ackLevel,
+						"error", err)
+				}
+			}()
 		}
 
 		return nil

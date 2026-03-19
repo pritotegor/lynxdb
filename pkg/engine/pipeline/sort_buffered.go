@@ -6,6 +6,7 @@ import (
 	"container/heap"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -704,9 +705,12 @@ func (bs *BufferedSortIterator) createDiskRun() error {
 
 	for _, row := range bs.rows {
 		if err := sw.WriteRow(row); err != nil {
-			_ = sw.CloseFile()
+			closeErr := sw.CloseFile()
 
-			return fmt.Errorf("buffered_sort.createDiskRun: write: %w", err)
+			return errors.Join(
+				fmt.Errorf("buffered_sort.createDiskRun: write: %w", err),
+				closeErr,
+			)
 		}
 	}
 

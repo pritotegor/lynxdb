@@ -205,6 +205,7 @@ type QueryConfig struct {
 type IngestConfig struct {
 	MaxBodySize  ByteSize `yaml:"max_body_size"  json:"max_body_size"`
 	MaxBatchSize int      `yaml:"max_batch_size" json:"max_batch_size"`
+	MaxLineBytes int      `yaml:"max_line_bytes" json:"max_line_bytes"`
 
 	// FSync controls whether part files are fsynced before atomic rename.
 	// When true (default), data is guaranteed durable after each flush.
@@ -370,6 +371,7 @@ func DefaultConfig() *Config {
 		Ingest: IngestConfig{
 			MaxBodySize:   100 * MB,
 			MaxBatchSize:  1000,
+			MaxLineBytes:  1 << 20, // 1 MB
 			DedupCapacity: 100_000,
 		},
 

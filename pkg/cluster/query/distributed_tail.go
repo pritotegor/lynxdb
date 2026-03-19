@@ -159,8 +159,10 @@ func (m *DistributedTailMerger) streamFromNode(
 			}
 
 			timeNs := msg.WatermarkNs
-			if tv, ok := fields["_time"]; ok && tv.Type() == event.FieldTypeTimestamp {
-				timeNs = tv.AsTimestamp().UnixNano()
+			if tv, ok := fields["_time"]; ok {
+				if t, tok := tv.TryAsTimestamp(); tok {
+					timeNs = t.UnixNano()
+				}
 			}
 
 			select {
@@ -229,17 +231,21 @@ func fieldsToEvent(fields map[string]event.Value) *event.Event {
 	for k, v := range fields {
 		switch k {
 		case "_time":
-			if v.Type() == event.FieldTypeTimestamp {
-				ev.Time = v.AsTimestamp()
+			if t, ok := v.TryAsTimestamp(); ok {
+				ev.Time = t
 			}
 		case "_raw":
-			ev.Raw = v.AsString()
+			s, _ := v.TryAsString()
+			ev.Raw = s
 		case "source", "_source":
-			ev.Source = v.AsString()
+			s, _ := v.TryAsString()
+			ev.Source = s
 		case "host":
-			ev.Host = v.AsString()
+			s, _ := v.TryAsString()
+			ev.Host = s
 		case "index":
-			ev.Index = v.AsString()
+			s, _ := v.TryAsString()
+			ev.Index = s
 		default:
 			ev.Fields[k] = v
 		}

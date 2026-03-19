@@ -485,18 +485,9 @@ func TestCountStarOptimization_NotWithWhere(t *testing.T) {
 	}
 }
 
-// BUG: This test exposes a real bug in countStarOptimizationRule.Apply.
-// Expected: countStarOnly must NOT fire when UnrollCommand precedes STATS,
-//
-//	because unroll changes cardinality (1 row → N rows from array explosion).
-//
-// Actual:   The rule fires because UnrollCommand is not checked in the
-//
-//	"no filtering commands before stats" loop. This causes the query
-//	engine to return the raw event count (e.g., 2) instead of the
-//	post-unroll row count (e.g., 3).
-//
-// The application code must be fixed — do not modify this test to pass.
+// Regression: countStarOnly must not fire when UnrollCommand precedes STATS,
+// because unroll changes cardinality (1 row → N rows from array explosion).
+// Fix: rules_agg.go checks for UnrollCommand in the pre-STATS command loop.
 func TestCountStarOptimization_NotWithUnroll(t *testing.T) {
 	// Pipeline: unpack_json | unroll field=items | STATS count
 	// Unroll changes cardinality — the metadata count shortcut is invalid.

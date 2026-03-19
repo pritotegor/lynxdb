@@ -109,12 +109,15 @@ func (e *EventStatsIterator) Next(ctx context.Context) (*Batch, error) {
 
 // Close releases resources: memory budget account, spill writer/reader, and spill file.
 func (e *EventStatsIterator) Close() error {
+	var errs []error
 	e.acct.Close()
 
 	// Close spill writer if still open (e.g., materialize() returned an error
 	// after transitionToSpill succeeded but before CloseFile was called).
 	if e.spillWriter != nil {
-		_ = e.spillWriter.CloseFile()
+		if err := e.spillWriter.CloseFile(); err != nil {
+			errs = append(errs, fmt.Errorf("eventstats: close spill writer: %w", err))
+		}
 		e.spillWriter = nil
 	}
 
@@ -135,7 +138,10 @@ func (e *EventStatsIterator) Close() error {
 		e.spillPath = ""
 	}
 
-	return e.child.Close()
+	if err := e.child.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // MemoryUsed returns the current tracked memory for this operator.

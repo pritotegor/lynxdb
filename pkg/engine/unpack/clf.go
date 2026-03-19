@@ -104,11 +104,9 @@ func (p *CLFParser) Parse(input string, emit func(key string, val event.Value) b
 	if !emit("status", InferValue(statusStr)) {
 		return nil
 	}
-	i = next
-	_ = i // suppress unused
 
 	// Field 7: bytes (number or "-")
-	bytesStr, _ := scanToken(s, i)
+	bytesStr, _ := scanToken(s, next)
 	if !emit("bytes", emitDash(bytesStr)) {
 		return nil
 	}

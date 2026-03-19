@@ -468,15 +468,18 @@ func applyCoordCommands(ctx context.Context, rows []map[string]event.Value, comm
 		for k, v := range row {
 			switch k {
 			case "_time":
-				if v.Type() == event.FieldTypeTimestamp {
-					ev.Time = v.AsTimestamp()
+				if t, ok := v.TryAsTimestamp(); ok {
+					ev.Time = t
 				}
 			case "_raw":
-				ev.Raw = v.AsString()
+				s, _ := v.TryAsString()
+				ev.Raw = s
 			case "source", "_source":
-				ev.Source = v.AsString()
+				s, _ := v.TryAsString()
+				ev.Source = s
 			case "host":
-				ev.Host = v.AsString()
+				s, _ := v.TryAsString()
+				ev.Host = s
 			default:
 				ev.Fields[k] = v
 			}

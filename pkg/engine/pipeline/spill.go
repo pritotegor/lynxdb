@@ -73,13 +73,17 @@ func toSpillValue(v event.Value) spillValue {
 	}
 	switch v.Type() {
 	case event.FieldTypeString:
-		return spillValue{Type: 1, Str: v.AsString()}
+		s, _ := v.TryAsString()
+		return spillValue{Type: 1, Str: s}
 	case event.FieldTypeInt:
-		return spillValue{Type: 2, Num: v.AsInt()}
+		n, _ := v.TryAsInt()
+		return spillValue{Type: 2, Num: n}
 	case event.FieldTypeFloat:
-		return spillValue{Type: 3, Flt: v.AsFloat()}
+		f, _ := v.TryAsFloat()
+		return spillValue{Type: 3, Flt: f}
 	case event.FieldTypeBool:
-		if v.AsBool() {
+		b, _ := v.TryAsBool()
+		if b {
 			return spillValue{Type: 4, Num: 1}
 		}
 

@@ -463,25 +463,30 @@ func hashValue(h hash.Hash64, v event.Value, buf []byte) {
 	switch v.Type() {
 	case event.FieldTypeString:
 		h.Write([]byte{1})
-		h.Write([]byte(v.AsString()))
+		s, _ := v.TryAsString()
+		h.Write([]byte(s))
 	case event.FieldTypeInt:
 		h.Write([]byte{2})
-		binary.LittleEndian.PutUint64(buf, uint64(v.AsInt()))
+		n, _ := v.TryAsInt()
+		binary.LittleEndian.PutUint64(buf, uint64(n))
 		h.Write(buf)
 	case event.FieldTypeFloat:
 		h.Write([]byte{3})
-		binary.LittleEndian.PutUint64(buf, math.Float64bits(v.AsFloat()))
+		f, _ := v.TryAsFloat()
+		binary.LittleEndian.PutUint64(buf, math.Float64bits(f))
 		h.Write(buf)
 	case event.FieldTypeBool:
 		h.Write([]byte{4})
-		if v.AsBool() {
+		b, _ := v.TryAsBool()
+		if b {
 			h.Write([]byte{1})
 		} else {
 			h.Write([]byte{0})
 		}
 	case event.FieldTypeTimestamp:
 		h.Write([]byte{5})
-		binary.LittleEndian.PutUint64(buf, uint64(v.AsTimestamp().UnixNano()))
+		t, _ := v.TryAsTimestamp()
+		binary.LittleEndian.PutUint64(buf, uint64(t.UnixNano()))
 		h.Write(buf)
 	default:
 		h.Write([]byte{0})

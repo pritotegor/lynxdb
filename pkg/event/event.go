@@ -103,8 +103,8 @@ func EstimateEventSize(e *Event) int64 {
 	for k, v := range e.Fields {
 		// Map entry: key string header + key data + Value struct.
 		size += int64(len(k)) + 16
-		if v.Type() == FieldTypeString {
-			size += int64(len(v.AsString()))
+		if s, ok := v.TryAsString(); ok {
+			size += int64(len(s))
 		} else {
 			size += 8 // numeric types
 		}

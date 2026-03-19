@@ -191,7 +191,11 @@ func (s *Server) processBatched(w http.ResponseWriter, r *http.Request, buildEve
 	}
 	scanner := bufio.NewScanner(r.Body)
 	bufp := scannerBufPool.Get().(*[]byte)
-	scanner.Buffer(*bufp, 1024*1024)
+	maxLineBytes := s.ingestCfg.MaxLineBytes
+	if maxLineBytes <= 0 {
+		maxLineBytes = 1 << 20 // 1 MB default
+	}
+	scanner.Buffer(*bufp, maxLineBytes)
 	defer scannerBufPool.Put(bufp)
 
 	pipe := pipeline.DefaultPipeline()

@@ -3,7 +3,6 @@ package stats
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 )
 
@@ -600,21 +599,17 @@ func TestBudgetMonitor_ObserveShrinkAll(t *testing.T) {
 	}
 }
 
-func TestBudgetMonitor_ObserveShrinkPanicsOnOverflow(t *testing.T) {
+func TestBudgetMonitor_ObserveShrinkClampsOnOverflow(t *testing.T) {
 	mon := NewBudgetMonitor("test", 0)
 	mon.ObserveGrow(100)
 
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected panic on ObserveShrink exceeding curAllocated")
-		}
-		msg := fmt.Sprintf("%v", r)
-		if !strings.Contains(msg, "ObserveShrink") {
-			t.Fatalf("unexpected panic message: %s", msg)
-		}
-	}()
-	mon.ObserveShrink(200) // should panic
+	// ObserveShrink with value exceeding curAllocated should clamp to zero
+	// (not panic), leaving the monitor in a consistent state.
+	mon.ObserveShrink(200)
+
+	if mon.CurAllocated() != 0 {
+		t.Fatalf("expected curAllocated=0 after clamping, got %d", mon.CurAllocated())
+	}
 }
 
 func TestBudgetMonitor_ObserveGrowZeroOrNegative(t *testing.T) {

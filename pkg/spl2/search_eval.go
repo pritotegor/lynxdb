@@ -50,7 +50,7 @@ func (e *SearchEvaluator) resolveField(field string, row map[string]event.Value)
 		return event.NullValue(), false
 	}
 
-	rawStr := rawVal.AsString()
+	rawStr, _ := rawVal.TryAsString()
 
 	// Populate or revalidate the cache.
 	if e.jsonCache.source != rawStr || e.jsonCache.parsed == nil {
@@ -164,7 +164,7 @@ func (e *SearchEvaluator) evalKeyword(kw *SearchKeywordExpr, row map[string]even
 	if !ok || rawVal.IsNull() {
 		return false
 	}
-	raw := rawVal.AsString()
+	raw, _ := rawVal.TryAsString()
 
 	if kw.IsTermMatch {
 		return MatchTerm(raw, kw.Value)

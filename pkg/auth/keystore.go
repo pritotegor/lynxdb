@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -177,7 +178,9 @@ func (ks *KeyStore) Verify(token string) *KeyInfo {
 		if verifyToken(token, ks.keys[i].Hash) {
 			ks.keys[i].LastUsedAt = now.UTC()
 			// Best-effort persist last_used_at — don't fail auth on write error.
-			_ = ks.saveLocked()
+			if err := ks.saveLocked(); err != nil {
+				slog.Error("keystore: failed to persist last_used_at update", "key_id", ks.keys[i].ID, "error", err)
+			}
 
 			info := ks.keys[i].Info()
 
@@ -205,7 +208,9 @@ func (ks *KeyStore) VerifyByID(keyID, token string) *KeyInfo {
 			}
 			if verifyToken(token, ks.keys[i].Hash) {
 				ks.keys[i].LastUsedAt = now.UTC()
-				_ = ks.saveLocked()
+				if err := ks.saveLocked(); err != nil {
+					slog.Error("keystore: failed to persist last_used_at update", "key_id", ks.keys[i].ID, "error", err)
+				}
 
 				info := ks.keys[i].Info()
 				return &info
