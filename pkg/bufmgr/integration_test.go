@@ -183,8 +183,8 @@ func TestIntegration_GovernorBufferManager_EvictionReleasesGovernorOnDirtyWriteb
 // This is the core memory pressure reclamation path.
 func TestIntegration_PressureDrivenEviction_EvictsFramesWhenGovernorOverLimit(t *testing.T) {
 	const (
-		maxFrames = 8
-		frameSize = 4096
+		maxFrames   = 8
+		frameSize   = 4096
 		totalBudget = int64(maxFrames) * int64(frameSize) // exactly enough for maxFrames
 	)
 
@@ -268,8 +268,8 @@ func TestIntegration_PressureDrivenEviction_EvictsFramesWhenGovernorOverLimit(t 
 // the governor returns ErrMemoryPressure.
 func TestIntegration_PressureDrivenEviction_InsufficientReclamation_ReturnsError(t *testing.T) {
 	const (
-		maxFrames = 4
-		frameSize = 4096
+		maxFrames   = 4
+		frameSize   = 4096
 		totalBudget = int64(maxFrames) * int64(frameSize)
 	)
 
@@ -487,7 +487,7 @@ func TestIntegration_ManagerStartAndWriteback_FlushesFramesOnTick(t *testing.T) 
 	)
 
 	var (
-		mu             sync.Mutex
+		mu              sync.Mutex
 		writtenFrameIDs []FrameID
 	)
 

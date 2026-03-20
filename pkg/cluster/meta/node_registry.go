@@ -59,13 +59,13 @@ type NodeEntry struct {
 
 // NodeResourceReport carries resource utilization data from heartbeats.
 type NodeResourceReport struct {
-	CPUPercent      float64 `msgpack:"cpu_percent"`
-	MemoryUsed      int64   `msgpack:"memory_used"`
-	MemoryTotal     int64   `msgpack:"memory_total"`
-	DiskUsed        int64   `msgpack:"disk_used"`
-	DiskTotal       int64   `msgpack:"disk_total"`
-	ActiveQueries   int64   `msgpack:"active_queries"`
-	IngestRateEPS   int64   `msgpack:"ingest_rate_eps"`
+	CPUPercent    float64 `msgpack:"cpu_percent"`
+	MemoryUsed    int64   `msgpack:"memory_used"`
+	MemoryTotal   int64   `msgpack:"memory_total"`
+	DiskUsed      int64   `msgpack:"disk_used"`
+	DiskTotal     int64   `msgpack:"disk_total"`
+	ActiveQueries int64   `msgpack:"active_queries"`
+	IngestRateEPS int64   `msgpack:"ingest_rate_eps"`
 }
 
 // ProcessHeartbeat updates the last heartbeat time for a node and stores the

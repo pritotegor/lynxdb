@@ -11,12 +11,12 @@ import (
 // All mutations are applied through typed apply methods, ensuring
 // that state changes are deterministic and replayable.
 type MetaState struct {
-	Nodes      map[sharding.NodeID]*NodeEntry     `msgpack:"nodes"`
-	ShardMap   *sharding.ShardMap                  `msgpack:"shard_map"`
-	Leases     map[string]*ShardLease              `msgpack:"leases"`     // key: ShardID.String()
-	Compaction map[string]*CompactionTask          `msgpack:"compaction"` // key: ShardID.String()
-	Ring       *sharding.HashRing                  `msgpack:"-"`          // rebuilt from Nodes, not serialized
-	Version    uint64                              `msgpack:"version"`
+	Nodes      map[sharding.NodeID]*NodeEntry `msgpack:"nodes"`
+	ShardMap   *sharding.ShardMap             `msgpack:"shard_map"`
+	Leases     map[string]*ShardLease         `msgpack:"leases"`     // key: ShardID.String()
+	Compaction map[string]*CompactionTask     `msgpack:"compaction"` // key: ShardID.String()
+	Ring       *sharding.HashRing             `msgpack:"-"`          // rebuilt from Nodes, not serialized
+	Version    uint64                         `msgpack:"version"`
 
 	// Distributed subsystem state (Phase 5).
 	FieldCatalog map[string]*GlobalFieldInfo  `msgpack:"field_catalog"` // key: field name

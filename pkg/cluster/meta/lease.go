@@ -10,11 +10,11 @@ import (
 // ShardLease represents a time-limited ownership claim on a shard.
 // Only the lease holder may write to the shard.
 type ShardLease struct {
-	ShardID   sharding.ShardID  `msgpack:"shard_id"`
-	HolderID  sharding.NodeID   `msgpack:"holder_id"`
-	GrantedAt time.Time         `msgpack:"granted_at"`
-	ExpiresAt time.Time         `msgpack:"expires_at"`
-	Epoch     uint64            `msgpack:"epoch"`
+	ShardID   sharding.ShardID `msgpack:"shard_id"`
+	HolderID  sharding.NodeID  `msgpack:"holder_id"`
+	GrantedAt time.Time        `msgpack:"granted_at"`
+	ExpiresAt time.Time        `msgpack:"expires_at"`
+	Epoch     uint64           `msgpack:"epoch"`
 }
 
 // IsValid checks whether the lease is still valid given the current time

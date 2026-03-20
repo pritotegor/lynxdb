@@ -9,11 +9,11 @@ import (
 
 // GlobalFieldInfo holds cluster-wide field metadata, merged from per-node deltas.
 type GlobalFieldInfo struct {
-	Name       string                       `msgpack:"name"`
-	Type       string                       `msgpack:"type"`        // dominant type across all nodes
-	TotalCount int64                        `msgpack:"total_count"` // sum of counts across all nodes
-	NodeCounts map[sharding.NodeID]int64    `msgpack:"node_counts"` // per-node event count for this field
-	TopValues  []FieldValueEntry            `msgpack:"top_values"`  // top 10 values by count
+	Name       string                    `msgpack:"name"`
+	Type       string                    `msgpack:"type"`        // dominant type across all nodes
+	TotalCount int64                     `msgpack:"total_count"` // sum of counts across all nodes
+	NodeCounts map[sharding.NodeID]int64 `msgpack:"node_counts"` // per-node event count for this field
+	TopValues  []FieldValueEntry         `msgpack:"top_values"`  // top 10 values by count
 }
 
 // FieldValueEntry holds a field value and its occurrence count.

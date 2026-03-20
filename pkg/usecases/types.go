@@ -129,10 +129,10 @@ type PhysicalPlan struct {
 // PipelineStage describes a single command in the query pipeline, including
 // per-stage field metadata for the Lynx Flow sidebar.
 type PipelineStage struct {
-	Command       string   // command name (e.g., "stats", "eval", "where")
-	Description   string   // human-readable summary (e.g., "stats count() by host")
-	FieldsAdded   []string // fields this stage creates
-	FieldsRemoved []string // fields this stage removes
+	Command        string   // command name (e.g., "stats", "eval", "where")
+	Description    string   // human-readable summary (e.g., "stats count() by host")
+	FieldsAdded    []string // fields this stage creates
+	FieldsRemoved  []string // fields this stage removes
 	FieldsOut      []string // complete ordered field set after this stage
 	FieldsOptional []string // fields that may or may not be present
 	FieldsUnknown  bool     // true when full set is unknowable (schema-on-read source stage)

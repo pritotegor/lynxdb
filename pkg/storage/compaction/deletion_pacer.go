@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	defaultDeletionRate = 200 << 20 // 200 MB/s
+	defaultDeletionRate  = 200 << 20 // 200 MB/s
 	deletionTickInterval = 100 * time.Millisecond
 )
 

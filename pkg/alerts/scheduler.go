@@ -32,7 +32,7 @@ type Scheduler struct {
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
 	sem          chan struct{} // concurrency limiter
-	clusterGuard ClusterGuard // nil in single-node mode
+	clusterGuard ClusterGuard  // nil in single-node mode
 }
 
 // NewScheduler creates a Scheduler.

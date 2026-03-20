@@ -13,10 +13,10 @@ type ScanIterator struct {
 	events            []*event.Event
 	batchSize         int
 	offset            int
-	columns           []string            // optional column filter (nil = all)
-	scanCalls         int                 // for testing: how many Next() calls produced data
+	columns           []string             // optional column filter (nil = all)
+	scanCalls         int                  // for testing: how many Next() calls produced data
 	acct              memgov.MemoryAccount // per-operator memory tracking
-	lastBatchEstimate int64               // tracks previous batch size for Shrink
+	lastBatchEstimate int64                // tracks previous batch size for Shrink
 }
 
 // NewScanIterator creates a scan iterator over a slice of events.

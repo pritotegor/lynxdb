@@ -638,4 +638,4 @@ type fakeResponseWriter struct {
 
 func (f *fakeResponseWriter) Header() http.Header         { return f.headers }
 func (f *fakeResponseWriter) Write(b []byte) (int, error) { return f.body.Write(b) }
-func (f *fakeResponseWriter) WriteHeader(code int)         { f.code = code }
+func (f *fakeResponseWriter) WriteHeader(code int)        { f.code = code }

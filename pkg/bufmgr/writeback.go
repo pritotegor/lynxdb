@@ -35,9 +35,9 @@ type writebackScheduler struct {
 	writebackFn func(f *Frame) error
 
 	// Signal channels (non-blocking coalesced signals).
-	writebackCh  chan struct{}
-	evictionCh   chan int // carries the number of frames needed
-	logger       *slog.Logger
+	writebackCh chan struct{}
+	evictionCh  chan int // carries the number of frames needed
+	logger      *slog.Logger
 
 	// Stats.
 	writtenCount atomic.Int64

@@ -480,14 +480,14 @@ func TestSizeTiered_EmergencyCompaction(t *testing.T) {
 	// tier has >= 4 segments. This forces the emergency path.
 	var segs []*SegmentInfo
 	sizes := []int64{
-		100 << 10,  // 100KB — tier 0
-		500 << 10,  // 500KB — tier 0
-		2 << 20,    // 2MB — tier 1
-		8 << 20,    // 8MB — tier 1
-		20 << 20,   // 20MB — tier 2
-		80 << 20,   // 80MB — tier 2
-		200 << 20,  // 200MB — tier 3
-		500 << 20,  // 500MB — tier 3
+		100 << 10, // 100KB — tier 0
+		500 << 10, // 500KB — tier 0
+		2 << 20,   // 2MB — tier 1
+		8 << 20,   // 8MB — tier 1
+		20 << 20,  // 20MB — tier 2
+		80 << 20,  // 80MB — tier 2
+		200 << 20, // 200MB — tier 3
+		500 << 20, // 500MB — tier 3
 	}
 	for i := 0; i < 8; i++ {
 		segs = append(segs, &SegmentInfo{

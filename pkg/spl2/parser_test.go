@@ -1163,7 +1163,7 @@ func TestParse_ImplicitWhereFuncCall(t *testing.T) {
 	}{
 		{"isnotnull", `FROM main | isnotnull(pg.duration_ms)`, "isnotnull"},
 		{"isnull", `FROM main | isnull(pg.duration_ms)`, "isnull"},
-		{"len", `FROM main | len(message) > 0`, ""},  // len() > 0 is a compare expr, not bare func
+		{"len", `FROM main | len(message) > 0`, ""}, // len() > 0 is a compare expr, not bare func
 	}
 
 	for _, tt := range tests {
@@ -1479,8 +1479,8 @@ func TestParse_StatsPercentileAliases(t *testing.T) {
 	// Verify that p50..p99 shorthand aliases are normalized to perc50..perc99
 	// at parse time so downstream code only sees the canonical names.
 	tests := []struct {
-		input    string
-		wantFunc string
+		input     string
+		wantFunc  string
 		wantAlias string
 	}{
 		{`| stats p99(duration) by host`, "perc99", ""},

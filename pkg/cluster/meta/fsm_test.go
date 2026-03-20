@@ -103,10 +103,10 @@ func TestFSM_ApplyUpdateShardMap(t *testing.T) {
 	sm := sharding.NewShardMap()
 	sm.Epoch = 5
 	sm.Assignments["p0"] = &sharding.ShardAssignment{
-		ShardID:  sharding.ShardID{Partition: 0},
-		Primary:  "node-1",
-		State:    sharding.ShardActive,
-		Epoch:    5,
+		ShardID: sharding.ShardID{Partition: 0},
+		Primary: "node-1",
+		State:   sharding.ShardActive,
+		Epoch:   5,
 	}
 
 	resp := applyCommand(t, fsm, CmdUpdateShardMap, sm, 1)
@@ -484,7 +484,7 @@ func (s *mockSnapshotSink) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (s *mockSnapshotSink) Close() error { return nil }
+func (s *mockSnapshotSink) Close() error  { return nil }
 func (s *mockSnapshotSink) Cancel() error { return nil }
 func (s *mockSnapshotSink) ID() string    { return "mock" }
 

@@ -12,11 +12,11 @@ import (
 )
 
 const (
-	footerReadSize      = 8192             // 8KB — enough for most segment footers
-	negCacheTTL         = 30 * time.Second // suppress repeated S3 requests for the same key
-	negCacheMaxEntries  = 1000             // trigger lazy sweep when exceeded
-	maxRetries          = 2
-	retryBaseBackoff    = 100 * time.Millisecond
+	footerReadSize     = 8192             // 8KB — enough for most segment footers
+	negCacheTTL        = 30 * time.Second // suppress repeated S3 requests for the same key
+	negCacheMaxEntries = 1000             // trigger lazy sweep when exceeded
+	maxRetries         = 2
+	retryBaseBackoff   = 100 * time.Millisecond
 )
 
 // LazyFetcher reads remote segments lazily: first the footer (to get the

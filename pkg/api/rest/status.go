@@ -113,15 +113,15 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	if bmStats := s.engine.BufMgrStats(); bmStats != nil {
 		memorySection["buffer_manager"] = map[string]interface{}{
-			"total_frames":    bmStats.TotalFrames,
-			"free_frames":     bmStats.FreeFrames,
-			"clean_frames":    bmStats.CleanFrames,
-			"dirty_frames":    bmStats.DirtyFrames,
-			"pinned_frames":   bmStats.PinnedFrames,
-			"eviction_count":  bmStats.EvictionCount,
-			"writeback_count": bmStats.WritebackCount,
-			"hit_count":       bmStats.HitCount,
-			"miss_count":      bmStats.MissCount,
+			"total_frames":     bmStats.TotalFrames,
+			"free_frames":      bmStats.FreeFrames,
+			"clean_frames":     bmStats.CleanFrames,
+			"dirty_frames":     bmStats.DirtyFrames,
+			"pinned_frames":    bmStats.PinnedFrames,
+			"eviction_count":   bmStats.EvictionCount,
+			"writeback_count":  bmStats.WritebackCount,
+			"hit_count":        bmStats.HitCount,
+			"miss_count":       bmStats.MissCount,
 			"seg_cache_frames": bmStats.SegCacheFrames,
 		}
 	}

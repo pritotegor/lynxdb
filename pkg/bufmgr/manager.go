@@ -109,9 +109,9 @@ var ErrAllFramesPinned = fmt.Errorf("bufmgr: all frames are pinned; cannot evict
 type manager struct {
 	mu sync.Mutex
 
-	frames   []*Frame
-	freeList []*Frame
-	evictor  *evictionQueue
+	frames    []*Frame
+	freeList  []*Frame
+	evictor   *evictionQueue
 	residency ResidencyIndex
 
 	maxFrames int

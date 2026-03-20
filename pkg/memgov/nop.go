@@ -6,12 +6,12 @@ type NopGovernor struct{}
 
 var _ Governor = (*NopGovernor)(nil)
 
-func (NopGovernor) Reserve(MemoryClass, int64) error            { return nil }
-func (NopGovernor) TryReserve(MemoryClass, int64) bool          { return true }
-func (NopGovernor) Release(MemoryClass, int64)                  {}
-func (NopGovernor) ClassUsage(MemoryClass) ClassStats            { return ClassStats{} }
-func (NopGovernor) TotalUsage() TotalStats                       { return TotalStats{} }
-func (NopGovernor) OnPressure(MemoryClass, PressureCallback)     {}
+func (NopGovernor) Reserve(MemoryClass, int64) error         { return nil }
+func (NopGovernor) TryReserve(MemoryClass, int64) bool       { return true }
+func (NopGovernor) Release(MemoryClass, int64)               {}
+func (NopGovernor) ClassUsage(MemoryClass) ClassStats        { return ClassStats{} }
+func (NopGovernor) TotalUsage() TotalStats                   { return TotalStats{} }
+func (NopGovernor) OnPressure(MemoryClass, PressureCallback) {}
 
 // NopLease returns an already-released lease. Nil-safe for defer patterns.
 func NopLease() *Lease {

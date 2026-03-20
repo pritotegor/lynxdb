@@ -106,10 +106,10 @@ type Engine struct {
 	spillMgr *enginepipeline.SpillManager
 
 	// Memory management v2: Governor + BufferManager.
-	governor         memgov.Governor                  // process-wide memory budget with class-based accounting
-	bufMgr           bufmgr.Manager                   // frame-based buffer manager with state machine
-	bufMgrCancel     context.CancelFunc               // cancels the bufMgr scheduler goroutine on shutdown
-	segCacheConsumer *consumers.SegmentCacheConsumer   // segment cache backed by bufMgr (nil when bufMgr is nil)
+	governor         memgov.Governor                 // process-wide memory budget with class-based accounting
+	bufMgr           bufmgr.Manager                  // frame-based buffer manager with state machine
+	bufMgrCancel     context.CancelFunc              // cancels the bufMgr scheduler goroutine on shutdown
+	segCacheConsumer *consumers.SegmentCacheConsumer // segment cache backed by bufMgr (nil when bufMgr is nil)
 
 	// Ingest dedup stage (nil when ingest.dedup_enabled is false).
 	ingestDedup *ingestpipeline.DedupStage

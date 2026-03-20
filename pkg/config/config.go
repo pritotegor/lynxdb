@@ -26,8 +26,8 @@ type Config struct {
 	Views         ViewsConfig         `yaml:"views"          json:"views"`
 	Server        ServerConfig        `yaml:"server"         json:"server"`
 	BufferManager BufferManagerConfig `yaml:"buffer_manager" json:"buffer_manager"`
-	Cluster       ClusterConfig      `yaml:"cluster"        json:"cluster"`
-	Profiles      map[string]Profile `yaml:"profiles"       json:"profiles"`
+	Cluster       ClusterConfig       `yaml:"cluster"        json:"cluster"`
+	Profiles      map[string]Profile  `yaml:"profiles"       json:"profiles"`
 }
 
 // ClusterConfig holds distributed clustering parameters.
@@ -364,7 +364,7 @@ func DefaultConfig() *Config {
 			MaxQueryMemory:             1 << 30, // 1 GB
 			MaxTempDirSizeBytes:        10 * GB, // 10 GB
 			BitmapSelectivityThreshold: 0.9,
-			SlowQueryThresholdMs:       1000, // 1 second
+			SlowQueryThresholdMs:       1000,    // 1 second
 			MaxQueryLength:             1 << 20, // 1 MB
 		},
 

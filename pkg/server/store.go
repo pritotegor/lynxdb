@@ -378,7 +378,6 @@ func (e *Engine) recordPruningMetrics(ss *storeStats) {
 // buildEventStore builds an event store from the engine's internal data.
 // This avoids the EventsToRows conversion (1 map alloc/event) and copyRows overhead,
 // enabling the pipeline engine to work directly with event.Event pointers.
-//
 func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, onProgress func(*SearchProgress), traceSegments ...bool) (map[string][]*event.Event, storeStats, error) {
 	trace := len(traceSegments) > 0 && traceSegments[0]
 
@@ -1230,7 +1229,6 @@ func (e *Engine) buildPartialAggStore(
 			BufferedEvents:       ss.BufferedEvents,
 		})
 	}
-
 
 	// Propagate segment skip counts to global pruning metrics.
 	e.recordPruningMetrics(&ss)

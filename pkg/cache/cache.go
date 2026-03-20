@@ -124,8 +124,8 @@ type Store struct {
 	currentSize int64 // running total of entry sizes, updated under mu
 
 	// Observability counters for cache pressure and disk errors.
-	poolFullDrops    atomic.Int64 // inserts dropped because governor pool was full
-	removeErrors     atomic.Int64 // os.Remove failures during eviction
+	poolFullDrops atomic.Int64 // inserts dropped because governor pool was full
+	removeErrors  atomic.Int64 // os.Remove failures during eviction
 
 	// pool is the optional memory pool. When non-nil, cache
 	// insertions call ReserveForCache and evictions call ReleaseCache.

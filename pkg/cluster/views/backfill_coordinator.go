@@ -56,10 +56,10 @@ func NewBackfillCoordinator(
 // All nodes will learn about this view via the shard map watch stream.
 func (c *BackfillCoordinator) RegisterView(ctx context.Context, name, query string, status meta.ViewStatus) error {
 	_, err := c.metaClient.RegisterView(ctx, &clusterpb.RegisterViewRequest{
-		Name:                name,
-		Query:               query,
-		Status:              string(status),
-		CoordinatorNodeId:   string(c.selfID),
+		Name:              name,
+		Query:             query,
+		Status:            string(status),
+		CoordinatorNodeId: string(c.selfID),
 	})
 	if err != nil {
 		return fmt.Errorf("cluster.views.RegisterView: %w", err)

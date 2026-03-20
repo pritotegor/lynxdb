@@ -24,7 +24,7 @@ var unsupportedCommands = map[string]string{
 	"return":       "return is not yet supported. Use head or fields to limit output.",
 	"format":       "format is not yet supported.",
 	// Note: "bucket" is NOT listed here — it is a valid Lynx Flow command (desugars to bin).
-	"sistats":      "sistats is not yet supported. Use stats instead.",
+	"sistats": "sistats is not yet supported. Use stats instead.",
 }
 
 // translationHints maps Splunk patterns to LynxDB suggestions.
@@ -156,22 +156,22 @@ func DetectScopeHint(query string, sourceCount int) *CompatHint {
 // lynxFlowHints maps SPL2 command types to Lynx Flow alternatives.
 // Both syntaxes are first-class citizens — these are advisory suggestions only.
 var lynxFlowHints = map[string]string{
-	"eval":           "Lynx Flow: | let <field> = <expr>",
-	"stats":          "Lynx Flow: | group by <fields> compute <aggs>",
-	"fields":         "Lynx Flow: | keep <fields> (include) or | omit <fields> (exclude)",
-	"fields -":       "Lynx Flow: | omit <fields>",
-	"streamstats":    "Lynx Flow: | running [window=N] <aggs> [by <fields>]",
-	"eventstats":     "Lynx Flow: | enrich <aggs> [by <fields>]",
-	"rex":            "Lynx Flow: | parse regex(<field>, \"<pattern>\")",
-	"unpack_json":    "Lynx Flow: | parse json(<field>) [as <ns>] [extract (<fields>)]",
-	"unpack_logfmt":  "Lynx Flow: | parse logfmt(<field>)",
-	"unpack_syslog":  "Lynx Flow: | parse syslog(<field>)",
-	"head":           "Lynx Flow: | take <N>",
-	"bin":            "Lynx Flow: | bucket <field> span=<dur> [as <alias>]",
-	"timechart":      "Lynx Flow: | every <span> [by <field>] compute <aggs>",
-	"sort":           "Lynx Flow: | order by <field> [asc|desc]",
-	"unroll":         "Lynx Flow: | explode <field> [as <alias>]",
-	"pack_json":      "Lynx Flow: | pack <fields> into <target>",
+	"eval":          "Lynx Flow: | let <field> = <expr>",
+	"stats":         "Lynx Flow: | group by <fields> compute <aggs>",
+	"fields":        "Lynx Flow: | keep <fields> (include) or | omit <fields> (exclude)",
+	"fields -":      "Lynx Flow: | omit <fields>",
+	"streamstats":   "Lynx Flow: | running [window=N] <aggs> [by <fields>]",
+	"eventstats":    "Lynx Flow: | enrich <aggs> [by <fields>]",
+	"rex":           "Lynx Flow: | parse regex(<field>, \"<pattern>\")",
+	"unpack_json":   "Lynx Flow: | parse json(<field>) [as <ns>] [extract (<fields>)]",
+	"unpack_logfmt": "Lynx Flow: | parse logfmt(<field>)",
+	"unpack_syslog": "Lynx Flow: | parse syslog(<field>)",
+	"head":          "Lynx Flow: | take <N>",
+	"bin":           "Lynx Flow: | bucket <field> span=<dur> [as <alias>]",
+	"timechart":     "Lynx Flow: | every <span> [by <field>] compute <aggs>",
+	"sort":          "Lynx Flow: | order by <field> [asc|desc]",
+	"unroll":        "Lynx Flow: | explode <field> [as <alias>]",
+	"pack_json":     "Lynx Flow: | pack <fields> into <target>",
 }
 
 // DetectLynxFlowHints examines a parsed query's commands and returns advisory

@@ -105,7 +105,7 @@ func (c *AlertCoordinator) ShouldEvaluate(alertID string) bool {
 // failover windows.
 func (c *AlertCoordinator) OnFired(ctx context.Context, alertID string) {
 	_, err := c.metaClient.ReportAlertFired(ctx, &clusterpb.ReportAlertFiredRequest{
-		AlertId:      alertID,
+		AlertId:       alertID,
 		FiredAtUnixNs: time.Now().UnixNano(),
 	})
 	if err != nil {

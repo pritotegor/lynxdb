@@ -10,9 +10,9 @@ type QueryRequest struct {
 	Latest    string            `json:"latest"`   // legacy alias for to
 	Limit     int               `json:"limit"`
 	Offset    int               `json:"offset"`
-	Format    string            `json:"format"`    // json (default)
-	Wait      *float64          `json:"wait"`      // nil=sync, 0=async, N=hybrid
-	Profile   string            `json:"profile"`   // "basic", "full", "trace" — enables profiling in response
+	Format    string            `json:"format"`              // json (default)
+	Wait      *float64          `json:"wait"`                // nil=sync, 0=async, N=hybrid
+	Profile   string            `json:"profile"`             // "basic", "full", "trace" — enables profiling in response
 	Variables map[string]string `json:"variables,omitempty"` // template variable substitution
 }
 

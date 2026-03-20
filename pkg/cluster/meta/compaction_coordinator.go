@@ -12,7 +12,7 @@ import (
 type CompactionTask struct {
 	ShardID        string          `msgpack:"shard_id"`
 	AssignedNode   sharding.NodeID `msgpack:"assigned_node"`
-	CatalogVersion uint64         `msgpack:"catalog_version"`
+	CatalogVersion uint64          `msgpack:"catalog_version"`
 	InputParts     []string        `msgpack:"input_parts"`
 	TargetLevel    int             `msgpack:"target_level"`
 	CreatedAt      time.Time       `msgpack:"created_at"`
@@ -23,7 +23,7 @@ type CompactionTask struct {
 type GrantCompactionPayload struct {
 	ShardID        string          `msgpack:"shard_id"`
 	AssignedNode   sharding.NodeID `msgpack:"assigned_node"`
-	CatalogVersion uint64         `msgpack:"catalog_version"`
+	CatalogVersion uint64          `msgpack:"catalog_version"`
 	InputParts     []string        `msgpack:"input_parts"`
 	TargetLevel    int             `msgpack:"target_level"`
 	TTL            time.Duration   `msgpack:"ttl"`

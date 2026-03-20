@@ -44,17 +44,17 @@ type OperatorMemory interface {
 
 // operatorMemory is the concrete OperatorMemory implementation.
 type operatorMemory struct {
-	mu         sync.Mutex
-	gov        Governor
-	label      string
-	reserved   int64 // guaranteed minimum bytes
-	leases     []*Lease
-	pinned     int64
-	revocable  int64
-	used       int64
-	maxUsed    int64
-	onRevoke   func(int64) int64
-	closed     bool
+	mu        sync.Mutex
+	gov       Governor
+	label     string
+	reserved  int64 // guaranteed minimum bytes
+	leases    []*Lease
+	pinned    int64
+	revocable int64
+	used      int64
+	maxUsed   int64
+	onRevoke  func(int64) int64
+	closed    bool
 }
 
 // NewOperatorMemory creates a per-operator memory manager.

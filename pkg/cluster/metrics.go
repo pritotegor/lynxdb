@@ -8,9 +8,9 @@ import "sync/atomic"
 // scraped by Prometheus (when the exporter is enabled).
 type Metrics struct {
 	// Rebalance metrics.
-	RebalanceTotal           atomic.Int64 // Total rebalances applied.
-	RebalanceMoveTotal       atomic.Int64 // Total shard moves across all rebalances.
-	RebalanceDurationNs      atomic.Int64 // Duration of last rebalance in nanoseconds.
+	RebalanceTotal      atomic.Int64 // Total rebalances applied.
+	RebalanceMoveTotal  atomic.Int64 // Total shard moves across all rebalances.
+	RebalanceDurationNs atomic.Int64 // Duration of last rebalance in nanoseconds.
 
 	// Shard state gauges (updated after each shard map change).
 	ShardActive    atomic.Int64
@@ -32,7 +32,7 @@ type Metrics struct {
 	LeaderChangesTotal atomic.Int64 // Total Raft leader transitions observed.
 
 	// Meta loss metrics.
-	MetaLossDurationNs   atomic.Int64 // Duration of current or last meta-loss episode.
+	MetaLossDurationNs     atomic.Int64 // Duration of current or last meta-loss episode.
 	MetaLossDuplicateParts atomic.Int64 // Duplicate partitions detected during meta loss.
 }
 

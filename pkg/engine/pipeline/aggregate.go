@@ -74,13 +74,13 @@ type AggregateIterator struct {
 	needsValues []bool // per-agg: true if dc/values/perc*/stdev need values map/all slice
 	groupCount  int    // total groups across all chains
 	spillFiles  []string
-	spillErr    error               // first spill error; checked in Next() to abort query
-	hasher      hash.Hash64         // persistent FNV-1a hasher, reset per call
+	spillErr    error                // first spill error; checked in Next() to abort query
+	hasher      hash.Hash64          // persistent FNV-1a hasher, reset per call
 	acct        memgov.MemoryAccount // per-operator memory tracking
-	spillMgr    *SpillManager       // lifecycle manager for spill files (nil = unmanaged)
-	spilledRows int64               // total rows written to spill files (for ResourceReporter)
-	partitions  *aggPartitionSet    // nil until first partitioned spill (lazy init)
-	budgetLimit int64               // query memory budget limit (0 = use default partitions)
+	spillMgr    *SpillManager        // lifecycle manager for spill files (nil = unmanaged)
+	spilledRows int64                // total rows written to spill files (for ResourceReporter)
+	partitions  *aggPartitionSet     // nil until first partitioned spill (lazy init)
+	budgetLimit int64                // query memory budget limit (0 = use default partitions)
 }
 
 type aggGroup struct {

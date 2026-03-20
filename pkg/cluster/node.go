@@ -23,14 +23,14 @@ type Node struct {
 	roles         RoleSet
 	grpcServer    *rpc.Server
 	clientPool    *rpc.ClientPool
-	raft           *raft.Raft                           // non-nil only for meta nodes
-	metaFSM        *meta.MetaFSM                        // non-nil only for meta nodes
-	metaService    *meta.Service                        // non-nil only for meta nodes
-	ingestService  clusterpb.IngestServiceServer        // non-nil only for ingest nodes
-	shardMapCache  *ShardMapCache
-	clock          ClockProvider
-	logger         *slog.Logger
-	dataDir        string
+	raft          *raft.Raft                    // non-nil only for meta nodes
+	metaFSM       *meta.MetaFSM                 // non-nil only for meta nodes
+	metaService   *meta.Service                 // non-nil only for meta nodes
+	ingestService clusterpb.IngestServiceServer // non-nil only for ingest nodes
+	shardMapCache *ShardMapCache
+	clock         ClockProvider
+	logger        *slog.Logger
+	dataDir       string
 
 	rebalanceCancel context.CancelFunc // cancels the rebalancer goroutine
 }

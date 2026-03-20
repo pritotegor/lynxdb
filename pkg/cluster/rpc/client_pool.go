@@ -14,7 +14,7 @@ import (
 // Connections are created lazily and cached by address.
 // Thread-safe.
 type ClientPool struct {
-	mu   sync.RWMutex
+	mu    sync.RWMutex
 	conns map[string]*grpc.ClientConn
 	opts  []grpc.DialOption
 }

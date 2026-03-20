@@ -427,13 +427,13 @@ func TestGlobMatchesUnpackPrefix(t *testing.T) {
 		{[]string{"pg.*"}, map[string]bool{"pg.": true}, true},
 		{[]string{"j.*"}, map[string]bool{"j.": true}, true},
 		{[]string{"pg.*", "j.*"}, map[string]bool{"pg.": true, "j.": true}, true},
-		{[]string{"pg.*"}, map[string]bool{"j.": true}, false},            // no matching prefix
-		{[]string{"pg.*", "j.*"}, map[string]bool{"pg.": true}, false},    // j.* not covered
-		{[]string{"*"}, map[string]bool{"pg.": true}, false},              // bare * not a prefix glob
-		{[]string{"pg.*"}, map[string]bool{}, false},                      // no prefixes
-		{[]string{"pg.*"}, nil, false},                                    // nil prefixes
-		{[]string{"host"}, map[string]bool{"pg.": true}, true},           // non-glob field → skip, all globs covered (vacuously)
-		{[]string{"host", "pg.*"}, map[string]bool{"pg.": true}, true},   // non-glob + covered glob
+		{[]string{"pg.*"}, map[string]bool{"j.": true}, false},         // no matching prefix
+		{[]string{"pg.*", "j.*"}, map[string]bool{"pg.": true}, false}, // j.* not covered
+		{[]string{"*"}, map[string]bool{"pg.": true}, false},           // bare * not a prefix glob
+		{[]string{"pg.*"}, map[string]bool{}, false},                   // no prefixes
+		{[]string{"pg.*"}, nil, false},                                 // nil prefixes
+		{[]string{"host"}, map[string]bool{"pg.": true}, true},         // non-glob field → skip, all globs covered (vacuously)
+		{[]string{"host", "pg.*"}, map[string]bool{"pg.": true}, true}, // non-glob + covered glob
 	}
 
 	for _, tt := range tests {

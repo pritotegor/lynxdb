@@ -577,3 +577,229 @@ func BenchmarkSegmentScan(b *testing.B) {
 		_, _ = r.ReadStrings("host")
 	}
 }
+
+// mockColumnCache is a minimal ColumnCache for testing the cached read path.
+type mockColumnCache struct {
+	stringsStore  map[string][]string
+	int64sStore   map[string][]int64
+	float64sStore map[string][]float64
+	hits, misses  int
+}
+
+func newMockColumnCache() *mockColumnCache {
+	return &mockColumnCache{
+		stringsStore:  make(map[string][]string),
+		int64sStore:   make(map[string][]int64),
+		float64sStore: make(map[string][]float64),
+	}
+}
+
+func (m *mockColumnCache) key(segID string, rgIdx int, col string) string {
+	return fmt.Sprintf("%s/%d/%s", segID, rgIdx, col)
+}
+
+func (m *mockColumnCache) GetStrings(segID string, rgIdx int, col string) ([]string, bool) {
+	v, ok := m.stringsStore[m.key(segID, rgIdx, col)]
+	if ok {
+		m.hits++
+	} else {
+		m.misses++
+	}
+
+	return v, ok
+}
+
+func (m *mockColumnCache) PutStrings(segID string, rgIdx int, col string, data []string) {
+	m.stringsStore[m.key(segID, rgIdx, col)] = data
+}
+
+func (m *mockColumnCache) GetInt64s(segID string, rgIdx int, col string) ([]int64, bool) {
+	v, ok := m.int64sStore[m.key(segID, rgIdx, col)]
+	if ok {
+		m.hits++
+	} else {
+		m.misses++
+	}
+
+	return v, ok
+}
+
+func (m *mockColumnCache) PutInt64s(segID string, rgIdx int, col string, data []int64) {
+	m.int64sStore[m.key(segID, rgIdx, col)] = data
+}
+
+func (m *mockColumnCache) GetFloat64s(segID string, rgIdx int, col string) ([]float64, bool) {
+	v, ok := m.float64sStore[m.key(segID, rgIdx, col)]
+	if ok {
+		m.hits++
+	} else {
+		m.misses++
+	}
+
+	return v, ok
+}
+
+func (m *mockColumnCache) PutFloat64s(segID string, rgIdx int, col string, data []float64) {
+	m.float64sStore[m.key(segID, rgIdx, col)] = data
+}
+
+func (m *mockColumnCache) InvalidateSegment(segID string) {
+	for k := range m.stringsStore {
+		if len(k) > len(segID) && k[:len(segID)] == segID {
+			delete(m.stringsStore, k)
+		}
+	}
+	for k := range m.int64sStore {
+		if len(k) > len(segID) && k[:len(segID)] == segID {
+			delete(m.int64sStore, k)
+		}
+	}
+	for k := range m.float64sStore {
+		if len(k) > len(segID) && k[:len(segID)] == segID {
+			delete(m.float64sStore, k)
+		}
+	}
+}
+
+func TestCachedColumnReads(t *testing.T) {
+	events := generateTestEvents(100)
+
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	if _, err := w.Write(events); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	r, err := OpenSegment(buf.Bytes())
+	if err != nil {
+		t.Fatalf("OpenSegment: %v", err)
+	}
+
+	cache := newMockColumnCache()
+	r.SetColumnCache(cache, "test-seg-1")
+
+	// First read: cache miss, populates cache.
+	hosts1, err := r.ReadStrings("host")
+	if err != nil {
+		t.Fatalf("ReadStrings(host): %v", err)
+	}
+	if cache.misses == 0 {
+		t.Error("expected cache misses on first read")
+	}
+	if len(cache.stringsStore) == 0 {
+		t.Error("expected cache entries after first read")
+	}
+
+	// Reset counters.
+	missesAfterFirst := cache.misses
+	hitsAfterFirst := cache.hits
+
+	// Second read: should hit the cache.
+	hosts2, err := r.ReadStrings("host")
+	if err != nil {
+		t.Fatalf("ReadStrings(host) second time: %v", err)
+	}
+	if cache.hits == hitsAfterFirst {
+		t.Error("expected cache hits on second read")
+	}
+	if cache.misses != missesAfterFirst {
+		t.Error("expected no new cache misses on second read")
+	}
+
+	// Results should be identical.
+	if len(hosts1) != len(hosts2) {
+		t.Fatalf("hosts length mismatch: %d vs %d", len(hosts1), len(hosts2))
+	}
+	for i := range hosts1 {
+		if hosts1[i] != hosts2[i] {
+			t.Errorf("host[%d]: %q vs %q", i, hosts1[i], hosts2[i])
+		}
+	}
+
+	// Verify timestamps are cached too.
+	cache.hits = 0
+	cache.misses = 0
+	ts1, err := r.ReadInt64s("_time")
+	if err != nil {
+		t.Fatalf("ReadInt64s(_time): %v", err)
+	}
+	firstMisses := cache.misses
+
+	ts2, err := r.ReadInt64s("_time")
+	if err != nil {
+		t.Fatalf("ReadInt64s(_time) second time: %v", err)
+	}
+	if cache.hits == 0 {
+		t.Error("expected cache hits for _time on second read")
+	}
+	if cache.misses != firstMisses {
+		t.Error("expected no new misses for _time on second read")
+	}
+	if len(ts1) != len(ts2) {
+		t.Fatalf("timestamps length mismatch: %d vs %d", len(ts1), len(ts2))
+	}
+	for i := range ts1 {
+		if ts1[i] != ts2[i] {
+			t.Errorf("timestamp[%d]: %d vs %d", i, ts1[i], ts2[i])
+		}
+	}
+}
+
+func TestCachedColumnReads_ReadEvents(t *testing.T) {
+	events := generateTestEvents(100)
+
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	if _, err := w.Write(events); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	r, err := OpenSegment(buf.Bytes())
+	if err != nil {
+		t.Fatalf("OpenSegment: %v", err)
+	}
+
+	cache := newMockColumnCache()
+	r.SetColumnCache(cache, "test-seg-2")
+
+	// Read all events — this exercises readRowGroupEvents with caching.
+	got, err := r.ReadEvents()
+	if err != nil {
+		t.Fatalf("ReadEvents: %v", err)
+	}
+	if len(got) != len(events) {
+		t.Fatalf("ReadEvents: got %d events, want %d", len(got), len(events))
+	}
+
+	// Verify correctness: all events should match originals.
+	for i := range events {
+		if !got[i].Time.Equal(events[i].Time) {
+			t.Errorf("event[%d].Time mismatch", i)
+		}
+		if got[i].Raw != events[i].Raw {
+			t.Errorf("event[%d].Raw mismatch", i)
+		}
+		if got[i].Host != events[i].Host {
+			t.Errorf("event[%d].Host mismatch", i)
+		}
+	}
+
+	// Cache should have been populated.
+	totalEntries := len(cache.stringsStore) + len(cache.int64sStore) + len(cache.float64sStore)
+	if totalEntries == 0 {
+		t.Error("expected cache entries after ReadEvents")
+	}
+
+	// Second ReadEvents should hit cache.
+	hitsBeforeSecond := cache.hits
+	got2, err := r.ReadEvents()
+	if err != nil {
+		t.Fatalf("ReadEvents second: %v", err)
+	}
+	if len(got2) != len(events) {
+		t.Fatalf("ReadEvents second: got %d events, want %d", len(got2), len(events))
+	}
+	if cache.hits <= hitsBeforeSecond {
+		t.Error("expected cache hits on second ReadEvents")
+	}
+}

@@ -115,10 +115,10 @@ func (s *Service) Heartbeat(_ context.Context, req *clusterpb.HeartbeatRequest) 
 	if req.Resources != nil {
 		resources = NodeResourceReport{
 			CPUPercent:    req.Resources.CpuPercent,
-			MemoryUsed:   req.Resources.MemoryUsedBytes,
-			MemoryTotal:  req.Resources.MemoryTotalBytes,
-			DiskUsed:     req.Resources.DiskUsedBytes,
-			DiskTotal:    req.Resources.DiskTotalBytes,
+			MemoryUsed:    req.Resources.MemoryUsedBytes,
+			MemoryTotal:   req.Resources.MemoryTotalBytes,
+			DiskUsed:      req.Resources.DiskUsedBytes,
+			DiskTotal:     req.Resources.DiskTotalBytes,
 			ActiveQueries: req.Resources.ActiveQueries,
 			IngestRateEPS: req.Resources.IngestRateEps,
 		}
@@ -269,7 +269,7 @@ func (s *Service) RenewLease(ctx context.Context, req *clusterpb.RenewLeaseReque
 	}
 
 	return &clusterpb.RenewLeaseResponse{
-		Granted:          true,
+		Granted:         true,
 		ExpiresAtUnixNs: expiresNs,
 	}, nil
 }

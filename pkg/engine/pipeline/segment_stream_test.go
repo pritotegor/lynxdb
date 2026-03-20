@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
