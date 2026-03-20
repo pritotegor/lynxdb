@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/lynxbase/lynxdb/internal/output"
 	"github.com/lynxbase/lynxdb/internal/ui"
@@ -59,10 +60,12 @@ func NewModel(mode string, opts RunOpts) Model {
 	completer := NewCompleter()
 
 	prompt := "lynxdb> "
-	contPrompt := "    ...> "
 	if mode == "file" {
 		prompt = "lynxdb[file]> "
 	}
+	// Align continuation prompt to same visual width as main prompt.
+	pw := lipgloss.Width(prompt)
+	contPrompt := strings.Repeat(" ", pw-4) + "...> "
 
 	header := NewHeader(mode, opts.Server, opts.File, opts.Events)
 	editor := NewEditor(prompt, contPrompt, history, completer)
@@ -115,8 +118,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.header.SetWidth(msg.Width)
 		m.statusBar.SetWidth(msg.Width)
 		m.editor.SetWidth(msg.Width)
-		// Results viewport gets remaining height (header=1, editor=1, statusbar=1).
-		resultsHeight := msg.Height - 3
+		// Results viewport: remaining height minus header(1) + editor(dynamic) + statusbar(1).
+		editorH := m.editor.EditorHeight()
+		resultsHeight := msg.Height - 1 - editorH - 1
 		if resultsHeight < 1 {
 			resultsHeight = 1
 		}
@@ -362,6 +366,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Editor focus — handle input.
 	cmd, submitMsg, slashMsg := m.editor.Update(msg)
+
+	// Recalculate layout when editor height may have changed.
+	editorH := m.editor.EditorHeight()
+	resultsH := m.height - 1 - editorH - 1
+	if resultsH < 1 {
+		resultsH = 1
+	}
+	m.results.SetSize(m.width, resultsH)
 
 	if submitMsg != nil {
 		m.running = true
@@ -669,8 +681,10 @@ func waitForTailEvent(eventCh <-chan map[string]interface{}, errCh <-chan error)
 func welcomeBanner() string {
 	t := ui.Stdout
 
-	return fmt.Sprintf("\n  Type %s for commands, %s for autocomplete, %s to exit.\n",
+	return fmt.Sprintf("\n  Type %s for commands, %s for autocomplete, %s/%s for history, %s to exit.\n",
 		t.Accent.Render("/help"),
 		t.Accent.Render("Tab"),
+		t.Accent.Render("Ctrl+P"),
+		t.Accent.Render("Ctrl+N"),
 		t.Accent.Render("Ctrl+D"))
 }

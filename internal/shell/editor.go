@@ -2,36 +2,64 @@ package shell
 
 import (
 	"strings"
-	"unicode/utf8"
 
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
-// Editor wraps textinput.Model with history navigation, multi-line accumulation,
-// and autocomplete integration.
+const editorMaxLines = 6
+
+// Editor wraps textarea.Model with history navigation, ghost-text autocomplete,
+// and dynamic height.
 type Editor struct {
-	input      textinput.Model
+	input      textarea.Model
 	history    *History
 	completer  *Completer
-	multiLine  string // accumulated buffer for lines ending with |
-	prompt     string // "lynxdb> " or "lynxdb[file]> "
-	contPrompt string // "    ...> "
-	inMulti    bool
+	prompt     string
+	contPrompt string
 	keys       keyMap
+	ghostText  string // autocomplete ghost suffix (dimmed in View)
 }
 
 // NewEditor creates an editor with the given prompt strings.
 func NewEditor(prompt, contPrompt string, history *History, completer *Completer) Editor {
-	ti := textinput.New()
-	ti.Prompt = prompt
-	ti.Focus()
-	ti.CharLimit = 4096
-	ti.ShowSuggestions = true
+	ta := textarea.New()
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 0
+	ta.MaxHeight = editorMaxLines
+	ta.SetHeight(1)
+	ta.EndOfBufferCharacter = ' '
+
+	// Override textarea KeyMap so our shell-level bindings don't conflict.
+	// InsertNewline: only shift+enter (we handle plain enter for submit).
+	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter"))
+	// LinePrevious: only up arrow (we use ctrl+p for history).
+	ta.KeyMap.LinePrevious = key.NewBinding(key.WithKeys("up"))
+	// LineNext: only down arrow (we use ctrl+n for history).
+	ta.KeyMap.LineNext = key.NewBinding(key.WithKeys("down"))
+
+	promptWidth := lipgloss.Width(prompt)
+	ta.SetPromptFunc(promptWidth, func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
+			return prompt
+		}
+		return contPrompt
+	})
+
+	// Minimal styling — no borders, no background, clear CursorLine highlight.
+	styles := ta.Styles()
+	styles.Focused.CursorLine = lipgloss.NewStyle()
+	styles.Focused.Base = lipgloss.NewStyle()
+	styles.Blurred.CursorLine = lipgloss.NewStyle()
+	styles.Blurred.Base = lipgloss.NewStyle()
+	ta.SetStyles(styles)
+
+	ta.Focus()
 
 	return Editor{
-		input:      ti,
+		input:      ta,
 		history:    history,
 		completer:  completer,
 		prompt:     prompt,
@@ -47,7 +75,17 @@ func (e *Editor) Value() string {
 
 // SetWidth updates the input width.
 func (e *Editor) SetWidth(w int) {
-	e.input.SetWidth(w - len(e.prompt) - 1)
+	e.input.SetWidth(w)
+}
+
+// EditorHeight returns the current height of the textarea.
+func (e *Editor) EditorHeight() int {
+	return e.input.Height()
+}
+
+// InMultiLine reports whether the editor content spans multiple lines.
+func (e *Editor) InMultiLine() bool {
+	return e.input.LineCount() > 1
 }
 
 // Update handles key events and returns commands.
@@ -58,76 +96,103 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 		case key.Matches(msg, e.keys.Submit):
 			return e.handleSubmit()
 
+		case key.Matches(msg, e.keys.InsertNewline):
+			e.input.InsertRune('\n')
+			e.updateHeight()
+			e.refreshSuggestions()
+			return nil, nil, nil
+
 		case key.Matches(msg, e.keys.Cancel):
 			return e.handleCancel()
 
 		case key.Matches(msg, e.keys.Quit):
-			if e.input.Value() == "" && !e.inMulti {
+			if e.input.Value() == "" {
 				return nil, nil, &slashCommandMsg{quit: true}
 			}
+			// Non-empty: fall through to textarea (ctrl+d = delete forward).
 
 		case key.Matches(msg, e.keys.AcceptSugg):
-			// Intercept Tab to prevent the textinput's double-fire bug:
-			// its Update accepts the suggestion AND inserts \t as a space.
-			if suggestion := e.input.CurrentSuggestion(); suggestion != "" {
-				e.input.SetValue(suggestion)
-				e.input.CursorEnd()
+			if e.ghostText != "" {
+				e.input.InsertString(e.ghostText)
+				e.ghostText = ""
+				e.updateHeight()
 			}
-
 			e.refreshSuggestions()
-
 			return nil, nil, nil
 
 		case key.Matches(msg, e.keys.HistPrev):
 			if entry, ok := e.history.Prev(); ok {
 				e.input.SetValue(entry)
-				e.input.CursorEnd()
+				e.input.MoveToEnd()
+				e.updateHeight()
 			}
-
 			e.refreshSuggestions()
-
 			return nil, nil, nil
 
 		case key.Matches(msg, e.keys.HistNext):
 			if entry, ok := e.history.Next(); ok {
 				e.input.SetValue(entry)
-				e.input.CursorEnd()
+				e.input.MoveToEnd()
+			} else {
+				e.input.Reset()
 			}
-
+			e.updateHeight()
 			e.refreshSuggestions()
-
 			return nil, nil, nil
 		}
 	}
 
-	// Default textinput update.
+	// Default textarea update.
 	var cmd tea.Cmd
 	e.input, cmd = e.input.Update(msg)
 
-	// Update suggestions after each keystroke.
+	e.updateHeight()
 	e.refreshSuggestions()
 
 	return cmd, nil, nil
 }
 
-// refreshSuggestions recomputes and sets suggestions, but only when
-// the cursor is at the end of the input. Mid-line editing should not
-// trigger ghost text or risk Tab-accepting a stale suggestion.
+// refreshSuggestions recomputes ghost text when cursor is at the end of input.
 func (e *Editor) refreshSuggestions() {
 	if e.completer == nil {
+		e.ghostText = ""
 		return
 	}
 
 	value := e.input.Value()
 
-	// Only suggest when cursor is at the end of the input.
-	if e.input.Position() < utf8.RuneCountInString(value) {
-		e.input.SetSuggestions(nil)
+	// Only suggest when cursor is at the absolute end of input.
+	onLastLine := e.input.Line() == e.input.LineCount()-1
+	lines := strings.Split(value, "\n")
+	lastLine := ""
+	if len(lines) > 0 {
+		lastLine = lines[len(lines)-1]
+	}
+	atLineEnd := e.input.Column() >= len(lastLine)
+
+	if !onLastLine || !atLineEnd {
+		e.ghostText = ""
 		return
 	}
 
 	suggestions := e.completer.Suggest(value)
-	e.input.SetSuggestions(suggestions)
+	if len(suggestions) > 0 && len(suggestions[0]) > len(value) {
+		e.ghostText = suggestions[0][len(value):]
+	} else {
+		e.ghostText = ""
+	}
+}
+
+// updateHeight adjusts textarea height to match content, clamped to [1, editorMaxLines].
+func (e *Editor) updateHeight() {
+	h := e.input.LineCount()
+	if h > editorMaxLines {
+		h = editorMaxLines
+	}
+	if h < 1 {
+		h = 1
+	}
+	e.input.SetHeight(h)
 }
 
 func (e *Editor) handleSubmit() (tea.Cmd, *querySubmitMsg, *slashCommandMsg) {
@@ -136,21 +201,17 @@ func (e *Editor) handleSubmit() (tea.Cmd, *querySubmitMsg, *slashCommandMsg) {
 		return nil, nil, nil
 	}
 
-	// Multi-line continuation: line ends with |.
+	// Auto-continue: if the trimmed value ends with |, insert a newline.
 	if strings.HasSuffix(value, "|") {
-		e.multiLine += value + " "
-		e.inMulti = true
-		e.input.SetValue("")
-		e.input.Prompt = e.contPrompt
-
+		e.input.InsertRune('\n')
+		e.updateHeight()
 		return nil, nil, nil
 	}
 
-	fullQuery := e.multiLine + value
-	e.multiLine = ""
-	e.inMulti = false
-	e.input.SetValue("")
-	e.input.Prompt = e.prompt
+	fullQuery := value
+	e.input.Reset()
+	e.updateHeight()
+	e.ghostText = ""
 
 	// Slash commands.
 	if strings.HasPrefix(fullQuery, "/") {
@@ -165,31 +226,33 @@ func (e *Editor) handleSubmit() (tea.Cmd, *querySubmitMsg, *slashCommandMsg) {
 }
 
 func (e *Editor) handleCancel() (tea.Cmd, *querySubmitMsg, *slashCommandMsg) {
-	if e.inMulti {
-		e.multiLine = ""
-		e.inMulti = false
-		e.input.SetValue("")
-		e.input.Prompt = e.prompt
-
-		return nil, nil, nil
-	}
-
 	if e.input.Value() != "" {
-		e.input.SetValue("")
-
+		e.input.Reset()
+		e.updateHeight()
+		e.ghostText = ""
 		return nil, nil, nil
 	}
 
-	// Empty input + Ctrl+C → hint.
+	// Empty input + Ctrl+C → no-op hint.
 	return nil, nil, nil
 }
 
-// InMultiLine reports whether the editor is in multi-line accumulation mode.
-func (e *Editor) InMultiLine() bool {
-	return e.inMulti
-}
-
-// View renders the editor.
+// View renders the editor with ghost text overlay.
 func (e *Editor) View() string {
-	return e.input.View()
+	v := e.input.View()
+	if e.ghostText == "" {
+		return v
+	}
+
+	// Append dimmed ghost text to the last non-empty line.
+	lines := strings.Split(v, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			ghost := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(e.ghostText)
+			lines[i] += ghost
+			break
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }

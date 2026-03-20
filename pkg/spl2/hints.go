@@ -62,6 +62,7 @@ type QueryHints struct {
 	InvertedIndexPredicates []InvertedIndexPredicate // field=value for inverted index
 	RangePredicates         []RangePredicate         // field range for pushdown
 	InPredicates            []InPredicate            // field IN (values) for segment-level pushdown
+	SkipRaw                 bool                     // true when _raw is not needed — all required fields are stored columns
 	searchExpr              SearchExpr               // first search expression (for pushdown analysis)
 	streamable              bool                     // true if query can execute without accumulating all events
 	terminalCmd             string                   // type of last command ("stats", "head", "search", etc.)
@@ -238,6 +239,13 @@ func mergeAnnotations(q *Query, h *QueryHints) {
 	if cols, ok := q.Annotations["requiredColumns"]; ok {
 		if ss, ok := cols.([]string); ok && len(ss) > 0 {
 			h.RequiredCols = ss
+		}
+	}
+
+	// skipRaw — optimizer determined _raw is not needed.
+	if sr, ok := q.Annotations["skipRaw"]; ok {
+		if b, ok := sr.(bool); ok {
+			h.SkipRaw = b
 		}
 	}
 

@@ -83,6 +83,14 @@ func (r *Registry) Get(id string) *Meta {
 	return r.parts[id]
 }
 
+// Has returns true if a part with the given ID exists in the registry.
+func (r *Registry) Has(id string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.parts[id]
+	return ok
+}
+
 // All returns all registered parts. The returned slice is a copy.
 func (r *Registry) All() []*Meta {
 	r.mu.RLock()

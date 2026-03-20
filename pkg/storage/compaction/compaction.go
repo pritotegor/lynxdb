@@ -90,6 +90,7 @@ type Compactor struct {
 	l0Strategy Strategy
 	l1Strategy Strategy
 	l2Strategy Strategy
+	intraL0    *IntraL0
 }
 
 // NewCompactor creates a new compactor with default strategies.
@@ -100,6 +101,7 @@ func NewCompactor(logger *slog.Logger) *Compactor {
 		l0Strategy: &SizeTiered{Threshold: L0CompactionThreshold, Logger: logger},
 		l1Strategy: &LevelBased{Threshold: L1CompactionThreshold, TargetSize: L2TargetSize, Logger: logger},
 		l2Strategy: &TimeWindow{ColdThreshold: 48 * time.Hour, Logger: logger},
+		intraL0:    &IntraL0{Threshold: 2 * L0CompactionThreshold},
 	}
 }
 
@@ -255,6 +257,27 @@ func (c *Compactor) PlanAllCompactions(index string) []*Job {
 				Index:     index,
 				Partition: partition,
 			})
+		}
+
+		// Intra-L0 fallback: when no L0→L1 merge plans exist for this
+		// partition (e.g., L1 is busy), merge L0 segments among themselves
+		// to reduce read amplification.
+		hasL0Merge := false
+		for _, j := range jobs {
+			if j.Partition == partition && j.Priority == PriorityL0ToL1 && !j.Plan.TrivialMove {
+				hasL0Merge = true
+				break
+			}
+		}
+		if !hasL0Merge {
+			for _, plan := range c.intraL0.Plan(segs) {
+				jobs = append(jobs, &Job{
+					Plan:      plan,
+					Priority:  PriorityL0ToL1,
+					Index:     index,
+					Partition: partition,
+				})
+			}
 		}
 
 		// L1→L2 plans.

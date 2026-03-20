@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -53,9 +54,13 @@ func (e *Engine) startCompaction(ctx context.Context) {
 	}
 
 	// Create adaptive controller for latency-based throttling.
-	e.adaptiveCtrl = compaction.NewAdaptiveController(compaction.AdaptiveConfig{
+	acCfg := compaction.AdaptiveConfig{
 		Logger: e.logger,
-	})
+	}
+	if e.storageCfg.CompactionRateLimitMB > 0 {
+		acCfg.MaxRate = int64(e.storageCfg.CompactionRateLimitMB) << 20
+	}
+	e.adaptiveCtrl = compaction.NewAdaptiveController(acCfg)
 
 	// Wire query completion callback to feed latency samples.
 	prevOnQueryComplete := e.onQueryComplete
@@ -139,13 +144,13 @@ func (e *Engine) submitCompactionJobs() {
 }
 
 // executeCompactionPlan runs a single compaction plan: merge input segments,
-// write the output via part.Writer (atomic rename), and swap handles.
+// write the output via streaming part writer (atomic rename), and swap handles.
 //
 // Uses StreamingMerge to emit events in bounded batches (StreamingBatchSize)
-// with periodic CPU yields, which is better for GC and CPU sharing than
-// collecting all events in a single allocation. The events are still
-// collected in memory because part.Writer.Write expects a full event slice;
-// true streaming-to-disk requires changes to part.Writer (future refactor).
+// directly to a PartStreamWriter on disk, bounding memory to O(1 batch)
+// instead of O(all events). Each batch is written as a row group via
+// segment.StreamWriter, then the file is finalized with inverted index +
+// footer, fsynced, and atomically renamed.
 func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition string, plan *compaction.Plan) {
 	planStart := time.Now()
 	e.logger.Debug("compaction plan execution started",
@@ -156,31 +161,70 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 		"trivial_move", plan.TrivialMove,
 	)
 
+	// Write compaction manifest for crash recovery.
+	var manifest *compaction.Manifest
+	if e.manifestStore != nil {
+		inputIDs := make([]string, len(plan.InputSegments))
+		for i, seg := range plan.InputSegments {
+			inputIDs[i] = seg.Meta.ID
+		}
+		manifestID := fmt.Sprintf("compact-%s-%s-%d", idx, partition, time.Now().UnixNano())
+		manifest = &compaction.Manifest{
+			ID:          manifestID,
+			Index:       idx,
+			Partition:   partition,
+			InputIDs:    inputIDs,
+			OutputLevel: plan.OutputLevel,
+			StartedAt:   time.Now(),
+		}
+		if err := e.manifestStore.Write(manifest); err != nil {
+			e.logger.Warn("failed to write compaction manifest", "error", err)
+		}
+		// Defer removal for error paths. The success path calls Complete()
+		// which moves the manifest to history and removes it from pending.
+		defer func() {
+			if manifest != nil && manifest.CompletedAt.IsZero() {
+				if removeErr := e.manifestStore.Remove(manifestID); removeErr != nil {
+					e.logger.Warn("failed to remove compaction manifest", "id", manifestID, "error", removeErr)
+				}
+			}
+		}()
+	}
+
 	// Handle trivial moves: promote the segment's level without merge.
 	if plan.TrivialMove && len(plan.InputSegments) == 1 {
 		e.executeTrivialMove(ctx, idx, partition, plan)
 		return
 	}
 
-	// Collect events via streaming merge. Even though we still collect all
-	// events, StreamingMerge emits in bounded batches with yield points,
-	// which is immediately better for GC pressure and CPU sharing.
-	// The rate limiter is threaded through to apply per-batch I/O pacing.
+	// Stream merged events directly to disk via PartStreamWriter, bounding
+	// memory to O(StreamingBatchSize) instead of O(all events).
 	var rateLimiter *compaction.TokenBucket
 	if e.compactionSched != nil {
 		rateLimiter = e.compactionSched.Limiter()
 	}
-	// Pre-allocate from input segment event counts to avoid repeated slice growth.
-	var estimatedEvents int64
-	for _, seg := range plan.InputSegments {
-		estimatedEvents += seg.Meta.EventCount
+
+	// Build writer options from the shared part writer config.
+	var writerOpts []part.WriterOption
+	writerOpts = append(writerOpts, part.WithFSync(e.partWriter != nil))
+	writerOpts = append(writerOpts, part.WithLogger(e.logger))
+	if e.storageCfg.MaxColumnsPerPart > 0 {
+		writerOpts = append(writerOpts, part.WithMaxColumns(e.storageCfg.MaxColumnsPerPart))
 	}
-	allEvents := make([]*event.Event, 0, estimatedEvents)
+
+	streamWriter, err := part.NewPartStreamWriter(e.partLayout, idx, plan.OutputLevel, writerOpts...)
+	if err != nil {
+		e.compactionFailures.record(idx, partition)
+		e.metrics.CompactionErrors.Add(1)
+		e.logger.Error("compaction stream writer init failed", "index", idx, "partition", partition, "error", err)
+		return
+	}
+
 	result, err := e.compactor.StreamingMerge(ctx, plan, compaction.MergeWriterFunc(func(batch []*event.Event) error {
-		allEvents = append(allEvents, batch...)
-		return nil
+		return streamWriter.WriteRowGroup(ctx, batch)
 	}), rateLimiter)
 	if err != nil {
+		streamWriter.Abort()
 		consecutive := e.compactionFailures.record(idx, partition)
 		e.metrics.CompactionErrors.Add(1)
 		if consecutive >= compactionEscalateThreshold {
@@ -199,13 +243,15 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 	e.logger.Debug("compaction merge phase complete",
 		"index", idx,
 		"partition", partition,
-		"events", len(allEvents),
+		"events", result.EventCount,
 		"merge_ms", mergeElapsed.Milliseconds(),
 	)
 
-	// Write merged events to disk via part.Writer (atomic tmp_ → rename).
-	outputMeta, err := e.partWriter.Write(ctx, idx, allEvents, result.Level)
+	// Finalize the streaming writer: writes inverted index + footer, fsyncs,
+	// and performs the atomic rename (tmp_ → final path).
+	outputMeta, err := streamWriter.Finalize(ctx)
 	if err != nil {
+		streamWriter.Abort()
 		consecutive := e.compactionFailures.record(idx, partition)
 		e.metrics.CompactionErrors.Add(1)
 		if consecutive >= compactionEscalateThreshold {
@@ -326,15 +372,31 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 
 	// Per-level compaction metrics.
 	switch plan.OutputLevel {
+	case compaction.L0:
+		e.metrics.CompactionIntraL0Runs.Add(1)
 	case compaction.L1:
 		e.metrics.CompactionL0ToL1Runs.Add(1)
 		e.metrics.CompactionL0ToL1Bytes.Add(outputMeta.SizeBytes)
+		e.metrics.CompactionL0ToL1InputBytes.Add(inputBytes)
 	case compaction.L2:
 		e.metrics.CompactionL1ToL2Runs.Add(1)
 		e.metrics.CompactionL1ToL2Bytes.Add(outputMeta.SizeBytes)
+		e.metrics.CompactionL1ToL2InputBytes.Add(inputBytes)
 	case compaction.L3:
 		e.metrics.CompactionL2ToL3Runs.Add(1)
 		e.metrics.CompactionL2ToL3Bytes.Add(outputMeta.SizeBytes)
+		e.metrics.CompactionL2ToL3InputBytes.Add(inputBytes)
+	}
+
+	e.metrics.CompactionDurationNs.Add(time.Since(planStart).Nanoseconds())
+
+	// Move manifest from pending to history with lineage info.
+	if manifest != nil && e.manifestStore != nil {
+		manifest.OutputSegmentID = outputMeta.ID
+		manifest.CompletedAt = time.Now()
+		if err := e.manifestStore.Complete(manifest); err != nil {
+			e.logger.Warn("failed to complete compaction manifest", "id", manifest.ID, "error", err)
+		}
 	}
 
 	e.logger.Info("compaction complete",
@@ -363,6 +425,31 @@ func (e *Engine) executeTrivialMove(_ context.Context, idx, partition string, pl
 		"to_level", plan.OutputLevel,
 	)
 
+	// Write manifest for trivial move crash recovery.
+	var trivialManifest *compaction.Manifest
+	if e.manifestStore != nil {
+		manifestID := fmt.Sprintf("trivial-%s-%s-%d", idx, partition, time.Now().UnixNano())
+		trivialManifest = &compaction.Manifest{
+			ID:          manifestID,
+			Index:       idx,
+			Partition:   partition,
+			InputIDs:    []string{seg.Meta.ID},
+			OutputLevel: plan.OutputLevel,
+			TrivialMove: true,
+			StartedAt:   time.Now(),
+		}
+		if err := e.manifestStore.Write(trivialManifest); err != nil {
+			e.logger.Warn("failed to write trivial move manifest", "error", err)
+		}
+		defer func() {
+			if trivialManifest != nil && trivialManifest.CompletedAt.IsZero() {
+				if removeErr := e.manifestStore.Remove(manifestID); removeErr != nil {
+					e.logger.Warn("failed to remove trivial move manifest", "id", manifestID, "error", removeErr)
+				}
+			}
+		}()
+	}
+
 	e.mu.Lock()
 	// Find the segment handle and update its level metadata.
 	for _, sh := range e.currentEpoch.Load().segments {
@@ -383,6 +470,8 @@ func (e *Engine) executeTrivialMove(_ context.Context, idx, partition string, pl
 	})
 
 	e.metrics.CompactionRuns.Add(1)
+	e.metrics.CompactionTrivialMoveCount.Add(1)
+	e.metrics.CompactionTrivialMoveBytes.Add(seg.Meta.SizeBytes)
 
 	// Per-level compaction metrics (trivial moves still count as level transitions).
 	switch plan.OutputLevel {
@@ -392,6 +481,15 @@ func (e *Engine) executeTrivialMove(_ context.Context, idx, partition string, pl
 		e.metrics.CompactionL1ToL2Runs.Add(1)
 	case compaction.L3:
 		e.metrics.CompactionL2ToL3Runs.Add(1)
+	}
+
+	// Move manifest from pending to history with lineage info.
+	if trivialManifest != nil && e.manifestStore != nil {
+		trivialManifest.OutputSegmentID = seg.Meta.ID
+		trivialManifest.CompletedAt = time.Now()
+		if err := e.manifestStore.Complete(trivialManifest); err != nil {
+			e.logger.Warn("failed to complete trivial move manifest", "id", trivialManifest.ID, "error", err)
+		}
 	}
 
 	e.logger.Info("trivial move complete",

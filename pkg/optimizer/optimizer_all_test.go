@@ -169,23 +169,49 @@ func TestOptimization_04_BloomFilter(t *testing.T) {
 
 // Test 5: EarlyTermination
 func TestOptimization_05_EarlyTermination(t *testing.T) {
-	q := &spl2.Query{
-		Source: &spl2.SourceClause{Index: "main"},
-		Commands: []spl2.Command{
-			&spl2.SearchCommand{Term: "error"},
-			&spl2.HeadCommand{Count: 10},
-		},
-	}
+	// Limit pushdown is only safe when no preceding command filters or reorders rows.
+	// SearchCommand filters rows, so limit cannot be pushed below it.
+	t.Run("safe_pushdown", func(t *testing.T) {
+		// Pipeline with only pass-through commands before head → limit pushed down.
+		q := &spl2.Query{
+			Source: &spl2.SourceClause{Index: "main"},
+			Commands: []spl2.Command{
+				&spl2.FieldsCommand{Fields: []string{"level", "message"}},
+				&spl2.HeadCommand{Count: 10},
+			},
+		}
 
-	opt := New()
-	result := opt.Optimize(q)
+		opt := New()
+		result := opt.Optimize(q)
 
-	prog := &spl2.Program{Main: result}
-	hints := spl2.ExtractQueryHints(prog)
+		prog := &spl2.Program{Main: result}
+		hints := spl2.ExtractQueryHints(prog)
 
-	if hints.Limit != 10 {
-		t.Errorf("expected hints.Limit == 10, got %d", hints.Limit)
-	}
+		if hints.Limit != 10 {
+			t.Errorf("expected hints.Limit == 10, got %d", hints.Limit)
+		}
+	})
+
+	t.Run("unsafe_with_search_filter", func(t *testing.T) {
+		// SearchCommand filters rows, so scan-level limit pushdown is unsafe.
+		q := &spl2.Query{
+			Source: &spl2.SourceClause{Index: "main"},
+			Commands: []spl2.Command{
+				&spl2.SearchCommand{Term: "error"},
+				&spl2.HeadCommand{Count: 10},
+			},
+		}
+
+		opt := New()
+		result := opt.Optimize(q)
+
+		prog := &spl2.Program{Main: result}
+		hints := spl2.ExtractQueryHints(prog)
+
+		if hints.Limit != 0 {
+			t.Errorf("expected hints.Limit == 0 (unsafe pushdown), got %d", hints.Limit)
+		}
+	})
 }
 
 // Test 6: AggregationPushdown

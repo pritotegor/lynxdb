@@ -5,35 +5,47 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
 // Manifest tracks an in-flight compaction for crash recovery.
 // Written before merge starts, removed after completion.
 type Manifest struct {
-	ID          string    `json:"id"`
-	Index       string    `json:"index"`
-	Partition   string    `json:"partition,omitempty"`
-	InputIDs    []string  `json:"input_ids"`
-	OutputLevel int       `json:"output_level"`
-	TrivialMove bool      `json:"trivial_move,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
+	ID              string    `json:"id"`
+	Index           string    `json:"index"`
+	Partition       string    `json:"partition,omitempty"`
+	InputIDs        []string  `json:"input_ids"`
+	OutputLevel     int       `json:"output_level"`
+	TrivialMove     bool      `json:"trivial_move,omitempty"`
+	StartedAt       time.Time `json:"started_at"`
+	OutputSegmentID string    `json:"output_segment_id,omitempty"` // set after successful completion
+	CompletedAt     time.Time `json:"completed_at,omitempty"`
 }
+
+// maxHistoryEntries is the maximum number of completed manifests to retain.
+const maxHistoryEntries = 1000
 
 // ManifestStore manages compaction manifests on disk.
 type ManifestStore struct {
-	dir string // path to compaction/pending/ directory
+	pendingDir string // path to compaction/pending/ directory
+	historyDir string // path to compaction/history/ directory
 }
 
 // NewManifestStore creates a manifest store at the given directory.
-// Creates the directory if it doesn't exist.
+// Creates the pending and history directories if they don't exist.
 func NewManifestStore(dir string) (*ManifestStore, error) {
 	pendingDir := filepath.Join(dir, "compaction", "pending")
 	if err := os.MkdirAll(pendingDir, 0o755); err != nil {
-		return nil, fmt.Errorf("compaction.NewManifestStore: create dir: %w", err)
+		return nil, fmt.Errorf("compaction.NewManifestStore: create pending dir: %w", err)
 	}
 
-	return &ManifestStore{dir: pendingDir}, nil
+	historyDir := filepath.Join(dir, "compaction", "history")
+	if err := os.MkdirAll(historyDir, 0o755); err != nil {
+		return nil, fmt.Errorf("compaction.NewManifestStore: create history dir: %w", err)
+	}
+
+	return &ManifestStore{pendingDir: pendingDir, historyDir: historyDir}, nil
 }
 
 // Write writes a manifest for an in-flight compaction.
@@ -44,7 +56,7 @@ func (ms *ManifestStore) Write(m *Manifest) error {
 		return fmt.Errorf("compaction.ManifestStore.Write: marshal: %w", err)
 	}
 
-	path := filepath.Join(ms.dir, m.ID+".json")
+	path := filepath.Join(ms.pendingDir, m.ID+".json")
 	tmpPath := path + ".tmp"
 
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
@@ -62,7 +74,7 @@ func (ms *ManifestStore) Write(m *Manifest) error {
 
 // Remove removes the manifest for a completed compaction.
 func (ms *ManifestStore) Remove(id string) error {
-	path := filepath.Join(ms.dir, id+".json")
+	path := filepath.Join(ms.pendingDir, id+".json")
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("compaction.ManifestStore.Remove: %w", err)
 	}
@@ -70,16 +82,75 @@ func (ms *ManifestStore) Remove(id string) error {
 	return nil
 }
 
+// Complete moves a manifest from pending to history after successful compaction.
+// The manifest should have OutputSegmentID and CompletedAt set before calling.
+// Uses atomic write to history, then removes from pending.
+func (ms *ManifestStore) Complete(m *Manifest) error {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("compaction.ManifestStore.Complete: marshal: %w", err)
+	}
+
+	// Atomic write to history directory.
+	histPath := filepath.Join(ms.historyDir, m.ID+".json")
+	tmpPath := histPath + ".tmp"
+
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return fmt.Errorf("compaction.ManifestStore.Complete: write history: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, histPath); err != nil {
+		os.Remove(tmpPath)
+
+		return fmt.Errorf("compaction.ManifestStore.Complete: rename history: %w", err)
+	}
+
+	// Remove from pending.
+	ms.Remove(m.ID)
+
+	// Enforce history retention limit.
+	ms.trimHistory()
+
+	return nil
+}
+
 // LoadPending returns all pending (interrupted) compaction manifests.
 // Call on startup to recover from crashes.
 func (ms *ManifestStore) LoadPending() ([]*Manifest, error) {
-	entries, err := os.ReadDir(ms.dir)
+	return ms.loadDir(ms.pendingDir)
+}
+
+// LoadHistory returns completed compaction manifests from the history directory,
+// optionally filtered to entries completed after `since`. Pass zero time to load all.
+func (ms *ManifestStore) LoadHistory(since time.Time) ([]*Manifest, error) {
+	all, err := ms.loadDir(ms.historyDir)
+	if err != nil {
+		return nil, err
+	}
+
+	if since.IsZero() {
+		return all, nil
+	}
+
+	var filtered []*Manifest
+	for _, m := range all {
+		if !m.CompletedAt.Before(since) {
+			filtered = append(filtered, m)
+		}
+	}
+
+	return filtered, nil
+}
+
+// loadDir reads all manifest JSON files from the given directory.
+func (ms *ManifestStore) loadDir(dir string) ([]*Manifest, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 
-		return nil, fmt.Errorf("compaction.ManifestStore.LoadPending: read dir: %w", err)
+		return nil, fmt.Errorf("compaction.ManifestStore.loadDir: read dir %s: %w", dir, err)
 	}
 
 	var manifests []*Manifest
@@ -94,7 +165,7 @@ func (ms *ManifestStore) LoadPending() ([]*Manifest, error) {
 			continue
 		}
 
-		data, err := os.ReadFile(filepath.Join(ms.dir, entry.Name()))
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			continue // skip unreadable files
 		}
@@ -108,6 +179,25 @@ func (ms *ManifestStore) LoadPending() ([]*Manifest, error) {
 	}
 
 	return manifests, nil
+}
+
+// trimHistory removes the oldest history entries if the count exceeds maxHistoryEntries.
+func (ms *ManifestStore) trimHistory() {
+	entries, err := os.ReadDir(ms.historyDir)
+	if err != nil || len(entries) <= maxHistoryEntries {
+		return
+	}
+
+	// Sort entries by name (which includes timestamp, so oldest first).
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
+
+	// Remove oldest entries beyond the retention limit.
+	excess := len(entries) - maxHistoryEntries
+	for i := 0; i < excess; i++ {
+		os.Remove(filepath.Join(ms.historyDir, entries[i].Name()))
+	}
 }
 
 // CleanupInterrupted handles recovery for interrupted compactions.

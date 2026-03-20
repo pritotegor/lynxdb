@@ -258,6 +258,9 @@ func NewServer(cfg Config) (*Server, error) {
 	// Storage metrics.
 	mux.HandleFunc("GET /api/v1/metrics", s.handleMetrics)
 
+	// Compaction history.
+	mux.HandleFunc("GET /api/v1/compaction/history", s.handleCompactionHistory)
+
 	// Saved queries (generic CRUD).
 	registerCRUD(mux, "/api/v1/queries", CRUDOpts[savedqueries.SavedQuery, *savedqueries.SavedQueryInput]{
 		Store:       s.queryStore,

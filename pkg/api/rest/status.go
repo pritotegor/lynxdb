@@ -2,9 +2,12 @@ package rest
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/lynxbase/lynxdb/internal/buildinfo"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
+	"github.com/lynxbase/lynxdb/pkg/storage"
+	"github.com/lynxbase/lynxdb/pkg/storage/compaction"
 )
 
 func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +136,34 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	respondData(w, http.StatusOK, data)
 }
 
+func (s *Server) handleCompactionHistory(w http.ResponseWriter, r *http.Request) {
+	var since time.Time
+	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+		var err error
+		since, err = time.Parse(time.RFC3339, sinceStr)
+		if err != nil {
+			respondError(w, ErrCodeInvalidRequest, http.StatusBadRequest,
+				"invalid 'since' parameter: expected RFC3339 format",
+				WithSuggestion("Use format like 2026-03-19T00:00:00Z"))
+			return
+		}
+	}
+
+	manifests, err := s.engine.CompactionHistory(since)
+	if err != nil {
+		respondError(w, ErrCodeInternalError, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if manifests == nil {
+		manifests = make([]*compaction.Manifest, 0)
+	}
+
+	respondData(w, http.StatusOK, map[string]interface{}{
+		"compactions": manifests,
+		"count":       len(manifests),
+	})
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	status := "healthy"
 	if s.degraded.Load() {
@@ -166,6 +197,16 @@ func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 
 // handleMetrics returns storage observability metrics as JSON.
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	metrics := s.engine.Metrics()
-	respondData(w, http.StatusOK, metrics)
+	snap := s.engine.Metrics().Snapshot()
+
+	// Attach adaptive compaction controller stats when available.
+	type metricsWithAdaptive struct {
+		*storage.MetricsSnapshot
+		AdaptiveCompaction interface{} `json:"adaptive_compaction,omitempty"`
+	}
+	resp := metricsWithAdaptive{MetricsSnapshot: snap}
+	if as := s.engine.AdaptiveStats(); as != nil {
+		resp.AdaptiveCompaction = as
+	}
+	respondData(w, http.StatusOK, resp)
 }

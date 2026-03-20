@@ -10,6 +10,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/storage"
+	"github.com/lynxbase/lynxdb/pkg/storage/compaction"
 )
 
 // GovernorStats returns memory governor v2 usage stats.
@@ -242,6 +243,15 @@ func (e *Engine) AdaptiveStats() *AdaptiveControllerStats {
 	}
 }
 
+// CompactionHistory returns completed compaction manifests, optionally filtered
+// to entries completed after `since`. Returns nil when manifest store is not initialized.
+func (e *Engine) CompactionHistory(since time.Time) ([]*compaction.Manifest, error) {
+	if e.manifestStore == nil {
+		return nil, nil
+	}
+	return e.manifestStore.LoadHistory(since)
+}
+
 // Metrics returns the storage metrics, populating dynamic values first.
 func (e *Engine) Metrics() *storage.Metrics {
 	// Populate dynamic metrics before returning.
@@ -253,12 +263,28 @@ func (e *Engine) Metrics() *storage.Metrics {
 	}
 	e.metrics.BatcherSizeBytes.Store(batcherBytes)
 	e.metrics.BatcherEvents.Store(batcherEvents)
-	e.metrics.SegmentCount.Store(int64(len(e.currentEpoch.Load().segments)))
+	segments := e.currentEpoch.Load().segments
+	e.metrics.SegmentCount.Store(int64(len(segments)))
 	var segBytes int64
-	for _, sh := range e.currentEpoch.Load().segments {
+	var l0, l1, l2, l3 int64
+	for _, sh := range segments {
 		segBytes += sh.meta.SizeBytes
+		switch sh.meta.Level {
+		case 0:
+			l0++
+		case 1:
+			l1++
+		case 2:
+			l2++
+		case 3:
+			l3++
+		}
 	}
 	e.metrics.SegmentTotalBytes.Store(segBytes)
+	e.metrics.SegmentL0Count.Store(l0)
+	e.metrics.SegmentL1Count.Store(l1)
+	e.metrics.SegmentL2Count.Store(l2)
+	e.metrics.SegmentL3Count.Store(l3)
 	e.mu.RUnlock()
 
 	// Cache metrics.

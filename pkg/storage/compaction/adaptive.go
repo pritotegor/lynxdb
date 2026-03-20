@@ -251,6 +251,17 @@ func (ac *AdaptiveController) Adjust() int64 {
 	return ac.currentRate
 }
 
+// SetMaxRate updates the maximum compaction rate ceiling.
+// If the current rate exceeds the new max, it is clamped.
+func (ac *AdaptiveController) SetMaxRate(maxRate int64) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	ac.maxRate = maxRate
+	if ac.currentRate > maxRate {
+		ac.currentRate = maxRate
+	}
+}
+
 // Rate returns the current compaction rate in bytes/sec.
 func (ac *AdaptiveController) Rate() int64 {
 	ac.mu.Lock()

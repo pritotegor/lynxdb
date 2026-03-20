@@ -69,12 +69,12 @@ func (sb StatusBar) View(focus Focus, running bool, inMulti bool, elapsed time.D
 		content = fmt.Sprintf("%s Executing... %s  |  Ctrl+C: cancel",
 			sb.spinner.View(), t.Value.Render(el.String()))
 	case inMulti:
-		content = "Enter: continue  |  Ctrl+C: cancel                     [multi-line]"
+		content = "Shift+Enter: new line  |  Ctrl+C: clear  |  Enter: run         [multi-line]"
 	case focus == ResultsFocus:
 		content = "Up/Down: scroll  |  Esc: editor  |  Ctrl+D: quit"
 	default:
 		modeTag := fmt.Sprintf("[%s]", sb.mode)
-		content = fmt.Sprintf("Enter: run  |  Ctrl+D: quit  |  Tab: complete  |  /help  %s", modeTag)
+		content = fmt.Sprintf("Enter: run  |  Ctrl+D: quit  |  Tab: complete  |  Ctrl+P/N: history  %s", modeTag)
 	}
 
 	return style.Render(content)

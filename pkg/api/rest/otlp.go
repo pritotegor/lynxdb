@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver"
 )
 
@@ -37,7 +36,7 @@ func (s *Server) handleOTLPLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pipe := pipeline.DefaultPipeline()
+	pipe := s.ingestPipeline()
 	processed, err := pipe.Process(events)
 	if err != nil {
 		respondInternalError(w, err.Error())

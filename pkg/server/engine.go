@@ -80,6 +80,7 @@ type Engine struct {
 
 	// Disk persistence components (nil when dataDir=="").
 	compactor       *compaction.Compactor
+	manifestStore   *compaction.ManifestStore
 	tierMgr         *tiering.Manager
 	objStore        objstore.ObjectStore
 	remoteLoadGroup singleflight.Group // deduplicates concurrent S3 fetches for the same segment
@@ -598,6 +599,16 @@ func (e *Engine) ReloadConfig(cfg *config.Config) {
 		e.logger.Info("reloaded query.max_concurrent", "old", old, "new", cfg.Query.MaxConcurrent)
 	}
 	e.queryCfg = cfg.Query
+
+	// Hot-reload compaction rate limit.
+	if cfg.Storage.CompactionRateLimitMB > 0 && e.adaptiveCtrl != nil {
+		newMax := int64(cfg.Storage.CompactionRateLimitMB) << 20
+		e.adaptiveCtrl.SetMaxRate(newMax)
+		if e.compactionSched != nil {
+			e.compactionSched.Limiter().SetRate(e.adaptiveCtrl.Rate())
+		}
+		e.logger.Info("reloaded compaction rate", "new_max_mb", cfg.Storage.CompactionRateLimitMB)
+	}
 }
 
 // ActiveJobs returns the number of currently running queries.

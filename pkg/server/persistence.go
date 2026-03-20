@@ -58,6 +58,27 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 	// Init compactor.
 	e.compactor = compaction.NewCompactor(e.logger)
 
+	// Initialize compaction manifest store for crash recovery.
+	manifestStore, err := compaction.NewManifestStore(e.dataDir)
+	if err != nil {
+		return fmt.Errorf("init manifest store: %w", err)
+	}
+	e.manifestStore = manifestStore
+
+	// Recover from interrupted compactions.
+	pending, err := manifestStore.LoadPending()
+	if err != nil {
+		e.logger.Warn("failed to load pending compaction manifests", "error", err)
+	} else if len(pending) > 0 {
+		e.logger.Info("found interrupted compactions, cleaning up",
+			"count", len(pending))
+		cleaned := manifestStore.CleanupInterrupted(pending, func(id string) bool {
+			return e.partRegistry.Get(id) != nil
+		})
+		e.logger.Info("compaction manifest cleanup complete",
+			"cleaned", len(cleaned))
+	}
+
 	// Load existing parts as segment handles for query path.
 	for _, meta := range e.partRegistry.All() {
 		if err := e.loadPartAsSegment(meta); err != nil {

@@ -207,8 +207,10 @@ func helpText() string {
 	b.WriteString("  /tail <query>      Start live tail with SPL2 filter\n")
 	fmt.Fprintf(&b, "\n  %s\n\n", t.Bold.Render("Tips:"))
 	b.WriteString("  - Tab for completion (SPL2 commands, fields)\n")
-	b.WriteString("  - End a line with | for multi-line input\n")
-	b.WriteString("  - Arrow Up/Down for history recall\n")
+	b.WriteString("  - Shift+Enter for multiline input (or end line with |)\n")
+	b.WriteString("  - Ctrl+P / Ctrl+N for history recall\n")
+	b.WriteString("  - Arrow keys to navigate within editor\n")
+	b.WriteString("  - Ctrl+A/E for line start/end, Alt+Left/Right for word nav\n")
 	b.WriteString("  - Ctrl+C cancels current input\n")
 	b.WriteString("  - PgUp/PgDn to scroll results\n")
 

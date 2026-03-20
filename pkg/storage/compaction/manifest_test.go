@@ -123,13 +123,13 @@ func TestManifestStore_LoadPending_SkipsCorrupt(t *testing.T) {
 	}
 
 	// Write corrupt JSON directly to the pending directory.
-	corruptPath := filepath.Join(store.dir, "compact-corrupt.json")
+	corruptPath := filepath.Join(store.pendingDir, "compact-corrupt.json")
 	if err := os.WriteFile(corruptPath, []byte("not valid json{{{"), 0o644); err != nil {
 		t.Fatalf("write corrupt file: %v", err)
 	}
 
 	// Write a .tmp file that should be skipped (non-.json extension).
-	tmpPath := filepath.Join(store.dir, "compact-partial.json.tmp")
+	tmpPath := filepath.Join(store.pendingDir, "compact-partial.json.tmp")
 	if err := os.WriteFile(tmpPath, []byte("partial write"), 0o644); err != nil {
 		t.Fatalf("write tmp file: %v", err)
 	}

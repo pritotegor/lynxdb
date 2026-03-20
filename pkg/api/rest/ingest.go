@@ -19,6 +19,16 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/storage/part"
 )
 
+// ingestPipeline returns the ingest pipeline selected by config.
+// When mode is "lightweight", only metadata fields are extracted at ingest time;
+// all other fields stay in _raw for query-time extraction via REX/spath.
+func (s *Server) ingestPipeline() *pipeline.Pipeline {
+	if s.ingestCfg.Mode == "lightweight" {
+		return pipeline.LightweightPipeline()
+	}
+	return pipeline.DefaultPipeline()
+}
+
 // scannerBufPool reuses scanner buffers across ingest requests to reduce
 // per-request allocations and GC pressure under high concurrency.
 var scannerBufPool = sync.Pool{
@@ -66,7 +76,7 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 		events[i] = p.ToEvent()
 	}
 
-	pipe := pipeline.DefaultPipeline()
+	pipe := s.ingestPipeline()
 	processed, err := pipe.Process(events)
 	if err != nil {
 		slog.Warn("ingest: pipeline processing failed", "error", err)
@@ -198,7 +208,7 @@ func (s *Server) processBatched(w http.ResponseWriter, r *http.Request, buildEve
 	scanner.Buffer(*bufp, maxLineBytes)
 	defer scannerBufPool.Put(bufp)
 
-	pipe := pipeline.DefaultPipeline()
+	pipe := s.ingestPipeline()
 	batch := make([]*event.Event, 0, batchSize)
 	accepted := 0
 	failed := 0

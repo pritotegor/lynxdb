@@ -38,8 +38,9 @@ func NewHistory() *History {
 }
 
 // Add appends an entry to history and resets the cursor.
+// Newlines are normalized to spaces since the history file is newline-delimited.
 func (h *History) Add(entry string) {
-	entry = strings.TrimSpace(entry)
+	entry = strings.ReplaceAll(strings.TrimSpace(entry), "\n", " ")
 	if entry == "" {
 		return
 	}

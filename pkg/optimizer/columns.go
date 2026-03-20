@@ -20,9 +20,158 @@ func (r *columnPruningRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 	if len(cols) == 0 {
 		return q, false
 	}
+
+	// Check if _raw can be skipped. When no command references _raw
+	// (no search, no rex on _raw, no unpack from _raw, no transaction),
+	// we can avoid decompressing it — a significant I/O saving.
+	if !rawNeededByCommands(q.Commands) {
+		// Remove _raw from required columns.
+		filtered := make([]string, 0, len(cols))
+		for _, c := range cols {
+			if c != "_raw" {
+				filtered = append(filtered, c)
+			}
+		}
+		cols = filtered
+		q.Annotate("skipRaw", true)
+	}
+
 	q.Annotate("requiredColumns", cols)
 
 	return q, true
+}
+
+// rawNeededByCommands returns true if any command in the pipeline requires _raw.
+// _raw is needed when:
+//   - A SearchCommand exists (full-text search on _raw)
+//   - A RexCommand targets _raw (default field)
+//   - An UnpackCommand/JsonCommand reads from _raw (default source)
+//   - A TransactionCommand exists (concatenates _raw)
+//   - The query outputs raw events (no aggregating terminal command)
+//
+// _raw can be skipped when the query terminates with an aggregation
+// (stats, timechart, top, rare) or a TABLE/FIELDS that doesn't include _raw.
+func rawNeededByCommands(cmds []spl2.Command) bool {
+	if len(cmds) == 0 {
+		return true // no commands = raw event output
+	}
+
+	for _, cmd := range cmds {
+		switch c := cmd.(type) {
+		case *spl2.SearchCommand:
+			return true // search operates on _raw
+		case *spl2.RexCommand:
+			if c.Field == "" || c.Field == "_raw" {
+				return true // rex defaults to _raw
+			}
+		case *spl2.UnpackCommand:
+			if c.SourceField == "" || c.SourceField == "_raw" {
+				return true // unpack defaults to _raw
+			}
+		case *spl2.JsonCommand:
+			if c.SourceField == "" || c.SourceField == "_raw" {
+				return true // json defaults to _raw
+			}
+		case *spl2.TransactionCommand:
+			return true // transaction concatenates _raw
+		case *spl2.WhereCommand:
+			if exprReferencesRaw(c.Expr) {
+				return true // e.g. match(_raw, "pattern")
+			}
+		case *spl2.EvalCommand:
+			if exprReferencesRaw(c.Expr) {
+				return true
+			}
+			for _, a := range c.Assignments {
+				if exprReferencesRaw(a.Expr) {
+					return true
+				}
+			}
+		case *spl2.AppendCommand:
+			if c.Subquery != nil && rawNeededByCommands(c.Subquery.Commands) {
+				return true
+			}
+		case *spl2.MultisearchCommand:
+			for _, sub := range c.Searches {
+				if rawNeededByCommands(sub.Commands) {
+					return true
+				}
+			}
+		}
+	}
+
+	// Check if the terminal command produces raw events that include _raw.
+	// Aggregation commands (stats, timechart, top, rare) produce derived rows
+	// without _raw. TABLE/FIELDS that omit _raw also don't need it.
+	terminal := cmds[len(cmds)-1]
+	switch terminal.(type) {
+	case *spl2.StatsCommand, *spl2.TimechartCommand,
+		*spl2.TopCommand, *spl2.RareCommand:
+		return false // aggregated output, _raw not in result
+	case *spl2.TableCommand:
+		// TABLE lists explicit output columns. Only need _raw if it's listed.
+		tc := terminal.(*spl2.TableCommand)
+		for _, f := range tc.Fields {
+			if f == "_raw" {
+				return true
+			}
+		}
+		return false
+	case *spl2.FieldsCommand:
+		fc := terminal.(*spl2.FieldsCommand)
+		if fc.Remove {
+			// "| fields - _raw" — explicitly removes _raw, still might need
+			// it upstream, but the output doesn't include it. However,
+			// upstream commands might still need it. Conservative: keep it.
+			return true
+		}
+		// "| fields level, status" — only need _raw if it's listed.
+		for _, f := range fc.Fields {
+			if f == "_raw" {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Default: raw event output needs _raw.
+	return true
+}
+
+// exprReferencesRaw returns true if the expression tree contains a FieldExpr
+// referencing "_raw" (e.g. match(_raw, "pattern"), len(_raw), _raw="...").
+func exprReferencesRaw(expr spl2.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *spl2.FieldExpr:
+		return e.Name == "_raw"
+	case *spl2.CompareExpr:
+		return exprReferencesRaw(e.Left) || exprReferencesRaw(e.Right)
+	case *spl2.BinaryExpr:
+		return exprReferencesRaw(e.Left) || exprReferencesRaw(e.Right)
+	case *spl2.ArithExpr:
+		return exprReferencesRaw(e.Left) || exprReferencesRaw(e.Right)
+	case *spl2.NotExpr:
+		return exprReferencesRaw(e.Expr)
+	case *spl2.FuncCallExpr:
+		for _, arg := range e.Args {
+			if exprReferencesRaw(arg) {
+				return true
+			}
+		}
+	case *spl2.InExpr:
+		if exprReferencesRaw(e.Field) {
+			return true
+		}
+		for _, v := range e.Values {
+			if exprReferencesRaw(v) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // computeRequiredColumns analyzes commands to determine which fields are needed.

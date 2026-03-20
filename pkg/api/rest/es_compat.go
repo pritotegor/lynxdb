@@ -292,7 +292,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 	scanner.Buffer(*bufp, maxLineBytes)
 	defer scannerBufPool.Put(bufp)
 
-	pipe := pipeline.DefaultPipeline()
+	pipe := s.ingestPipeline()
 	var items []esBulkItemResult
 	batch := make([]*event.Event, 0, batchSize)
 	// H4 fix: track pending items per batch; only mark success AFTER commit.
@@ -493,7 +493,7 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ev := esDocToEvent(doc, indexName)
-	pipe := pipeline.DefaultPipeline()
+	pipe := s.ingestPipeline()
 	processed, err := pipe.Process([]*event.Event{ev})
 	if err != nil {
 		respondJSON(w, http.StatusInternalServerError, map[string]interface{}{

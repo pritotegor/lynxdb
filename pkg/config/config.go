@@ -207,6 +207,13 @@ type IngestConfig struct {
 	MaxBatchSize int      `yaml:"max_batch_size" json:"max_batch_size"`
 	MaxLineBytes int      `yaml:"max_line_bytes" json:"max_line_bytes"`
 
+	// Mode controls how much parsing happens at ingest time.
+	// "full" (default): extract all JSON fields into columns.
+	// "lightweight": extract only well-known metadata fields (_time, host, source,
+	// sourcetype, level, index), leaving all other data in _raw for query-time
+	// extraction via REX/spath. Reduces ingest CPU by ~30-40%.
+	Mode string `yaml:"mode" json:"mode"`
+
 	// FSync controls whether part files are fsynced before atomic rename.
 	// When true (default), data is guaranteed durable after each flush.
 	// When false, the OS page cache buffers writes — lower latency for

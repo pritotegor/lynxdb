@@ -211,3 +211,112 @@ func TestSplitRawLines(t *testing.T) {
 		t.Errorf("got %d events, want 3", len(events))
 	}
 }
+
+func TestMetadataOnlyParser(t *testing.T) {
+	raw := `{"level":"ERROR","status":500,"host":"web-01","source":"nginx","message":"timeout","ts":"2024-01-15T10:30:00Z"}`
+	e := event.NewEvent(time.Now(), raw)
+	parser := &MetadataOnlyParser{}
+	events, err := parser.Process([]*event.Event{e})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	ev := events[0]
+
+	// Metadata fields should be extracted.
+	if ev.Host != "web-01" {
+		t.Errorf("host: got %q, want web-01", ev.Host)
+	}
+	if ev.Source != "nginx" {
+		t.Errorf("source: got %q, want nginx", ev.Source)
+	}
+	if ev.GetField("level").AsString() != "ERROR" {
+		t.Errorf("level: got %v, want ERROR", ev.GetField("level"))
+	}
+	if ev.GetField("ts").AsString() != "2024-01-15T10:30:00Z" {
+		t.Errorf("ts: got %v, want 2024-01-15T10:30:00Z", ev.GetField("ts"))
+	}
+
+	// Non-metadata fields should NOT be extracted.
+	if !ev.GetField("status").IsNull() {
+		t.Errorf("status should not be extracted in lightweight mode, got %v", ev.GetField("status"))
+	}
+	if !ev.GetField("message").IsNull() {
+		t.Errorf("message should not be extracted in lightweight mode, got %v", ev.GetField("message"))
+	}
+}
+
+func TestMetadataOnlyParser_NonJSON(t *testing.T) {
+	e := event.NewEvent(time.Now(), "this is not JSON")
+	parser := &MetadataOnlyParser{}
+	events, err := parser.Process([]*event.Event{e})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if !events[0].ParseError {
+		t.Error("expected ParseError for non-JSON input")
+	}
+	if parser.ParseErrors.Load() != 1 {
+		t.Errorf("ParseErrors: got %d, want 1", parser.ParseErrors.Load())
+	}
+}
+
+func TestMetadataOnlyParser_PreserveExisting(t *testing.T) {
+	// If host/source are already set on the event, they should not be overwritten.
+	e := event.NewEvent(time.Now(), `{"host":"json-host","source":"json-source"}`)
+	e.Host = "pre-set-host"
+	e.Source = "pre-set-source"
+	parser := &MetadataOnlyParser{}
+	events, err := parser.Process([]*event.Event{e})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if events[0].Host != "pre-set-host" {
+		t.Errorf("host: got %q, want pre-set-host (should not overwrite)", events[0].Host)
+	}
+	if events[0].Source != "pre-set-source" {
+		t.Errorf("source: got %q, want pre-set-source (should not overwrite)", events[0].Source)
+	}
+}
+
+func TestLightweightPipeline(t *testing.T) {
+	pipe := LightweightPipeline()
+
+	raw := `{"level":"ERROR","status":500,"host":"web-01","message":"timeout"}`
+	e := event.NewEvent(time.Time{}, raw)
+	processed, err := pipe.Process([]*event.Event{e})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	ev := processed[0]
+
+	// Pipeline should set index and timestamp.
+	if ev.Index != "main" {
+		t.Errorf("index: got %q, want main", ev.Index)
+	}
+	if ev.Time.IsZero() {
+		t.Error("timestamp not set")
+	}
+
+	// Metadata fields extracted.
+	if ev.Host != "web-01" {
+		t.Errorf("host: got %q, want web-01", ev.Host)
+	}
+	if ev.GetField("level").AsString() != "ERROR" {
+		t.Errorf("level: got %v, want ERROR", ev.GetField("level"))
+	}
+
+	// Non-metadata fields should NOT be extracted.
+	if !ev.GetField("status").IsNull() {
+		t.Errorf("status should not be extracted, got %v", ev.GetField("status"))
+	}
+	if !ev.GetField("message").IsNull() {
+		t.Errorf("message should not be extracted, got %v", ev.GetField("message"))
+	}
+
+	// _raw should be preserved for query-time extraction.
+	if ev.Raw != raw {
+		t.Errorf("_raw should be preserved, got %q", ev.Raw)
+	}
+}

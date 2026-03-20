@@ -20,21 +20,32 @@ type Metrics struct {
 	SegmentTotalBytes atomic.Int64
 	SegmentReads      atomic.Int64
 	SegmentReadBytes  atomic.Int64
+	SegmentL0Count    atomic.Int64
+	SegmentL1Count    atomic.Int64
+	SegmentL2Count    atomic.Int64
+	SegmentL3Count    atomic.Int64
 
 	// Compaction metrics.
-	CompactionRuns        atomic.Int64
-	CompactionInputBytes  atomic.Int64
-	CompactionOutputBytes atomic.Int64
-	CompactionErrors      atomic.Int64
-	CompactionQueueDepth  atomic.Int64 // current number of pending compaction jobs
+	CompactionRuns             atomic.Int64
+	CompactionInputBytes       atomic.Int64
+	CompactionOutputBytes      atomic.Int64
+	CompactionErrors           atomic.Int64
+	CompactionQueueDepth       atomic.Int64 // current number of pending compaction jobs
+	CompactionTrivialMoveCount atomic.Int64 // trivial move promotions (no merge)
+	CompactionTrivialMoveBytes atomic.Int64 // bytes promoted via trivial move
+	CompactionIntraL0Runs      atomic.Int64 // intra-L0 merge runs (L0→L0)
+	CompactionDurationNs       atomic.Int64 // cumulative compaction nanoseconds
 
 	// Per-level compaction metrics.
-	CompactionL0ToL1Runs  atomic.Int64
-	CompactionL0ToL1Bytes atomic.Int64
-	CompactionL1ToL2Runs  atomic.Int64
-	CompactionL1ToL2Bytes atomic.Int64
-	CompactionL2ToL3Runs  atomic.Int64
-	CompactionL2ToL3Bytes atomic.Int64
+	CompactionL0ToL1Runs       atomic.Int64
+	CompactionL0ToL1Bytes      atomic.Int64
+	CompactionL0ToL1InputBytes atomic.Int64
+	CompactionL1ToL2Runs       atomic.Int64
+	CompactionL1ToL2Bytes      atomic.Int64
+	CompactionL1ToL2InputBytes atomic.Int64
+	CompactionL2ToL3Runs       atomic.Int64
+	CompactionL2ToL3Bytes      atomic.Int64
+	CompactionL2ToL3InputBytes atomic.Int64
 
 	// Cache metrics.
 	CacheHits      atomic.Int64
@@ -111,6 +122,10 @@ type MetricsSnapshot struct {
 		TotalBytes int64 `json:"total_bytes"`
 		Reads      int64 `json:"reads"`
 		ReadBytes  int64 `json:"read_bytes"`
+		L0Count    int64 `json:"l0_count"`
+		L1Count    int64 `json:"l1_count"`
+		L2Count    int64 `json:"l2_count"`
+		L3Count    int64 `json:"l3_count"`
 	} `json:"segment"`
 
 	Compaction struct {
@@ -119,22 +134,33 @@ type MetricsSnapshot struct {
 		OutputBytes        int64   `json:"output_bytes"`
 		Errors             int64   `json:"errors"`
 		QueueDepth         int64   `json:"queue_depth"`
+		TrivialMoveCount   int64   `json:"trivial_move_count"`
+		TrivialMoveBytes   int64   `json:"trivial_move_bytes"`
 		WriteAmplification float64 `json:"write_amplification"` // output_bytes / input_bytes (ideal = 1.0)
+		DurationMs         int64   `json:"duration_ms"`
 	} `json:"compaction"`
+
+	SystemWriteAmplification float64 `json:"system_write_amplification"`
 
 	CompactionLevels struct {
 		L0ToL1 struct {
 			Runs     int64 `json:"runs"`
+			BytesIn  int64 `json:"bytes_in"`
 			BytesOut int64 `json:"bytes_out"`
 		} `json:"l0_to_l1"`
 		L1ToL2 struct {
 			Runs     int64 `json:"runs"`
+			BytesIn  int64 `json:"bytes_in"`
 			BytesOut int64 `json:"bytes_out"`
 		} `json:"l1_to_l2"`
 		L2ToL3 struct {
 			Runs     int64 `json:"runs"`
+			BytesIn  int64 `json:"bytes_in"`
 			BytesOut int64 `json:"bytes_out"`
 		} `json:"l2_to_l3"`
+		IntraL0 struct {
+			Runs int64 `json:"runs"`
+		} `json:"intra_l0"`
 	} `json:"compaction_levels"`
 
 	Cache struct {
@@ -216,22 +242,38 @@ func (m *Metrics) Snapshot() *MetricsSnapshot {
 	snap.Segment.TotalBytes = m.SegmentTotalBytes.Load()
 	snap.Segment.Reads = m.SegmentReads.Load()
 	snap.Segment.ReadBytes = m.SegmentReadBytes.Load()
+	snap.Segment.L0Count = m.SegmentL0Count.Load()
+	snap.Segment.L1Count = m.SegmentL1Count.Load()
+	snap.Segment.L2Count = m.SegmentL2Count.Load()
+	snap.Segment.L3Count = m.SegmentL3Count.Load()
 
 	snap.Compaction.Runs = m.CompactionRuns.Load()
 	snap.Compaction.InputBytes = m.CompactionInputBytes.Load()
 	snap.Compaction.OutputBytes = m.CompactionOutputBytes.Load()
 	snap.Compaction.Errors = m.CompactionErrors.Load()
 	snap.Compaction.QueueDepth = m.CompactionQueueDepth.Load()
+	snap.Compaction.TrivialMoveCount = m.CompactionTrivialMoveCount.Load()
+	snap.Compaction.TrivialMoveBytes = m.CompactionTrivialMoveBytes.Load()
+	snap.Compaction.DurationMs = m.CompactionDurationNs.Load() / 1e6
 	if snap.Compaction.InputBytes > 0 {
 		snap.Compaction.WriteAmplification = float64(snap.Compaction.OutputBytes) / float64(snap.Compaction.InputBytes)
 	}
 
+	// System-wide write amplification: (flush_bytes + compaction_output) / ingest_bytes.
+	if ingestBytes := m.IngestBytes.Load(); ingestBytes > 0 {
+		snap.SystemWriteAmplification = float64(snap.Flush.FlushBytes+snap.Compaction.OutputBytes) / float64(ingestBytes)
+	}
+
 	snap.CompactionLevels.L0ToL1.Runs = m.CompactionL0ToL1Runs.Load()
+	snap.CompactionLevels.L0ToL1.BytesIn = m.CompactionL0ToL1InputBytes.Load()
 	snap.CompactionLevels.L0ToL1.BytesOut = m.CompactionL0ToL1Bytes.Load()
 	snap.CompactionLevels.L1ToL2.Runs = m.CompactionL1ToL2Runs.Load()
+	snap.CompactionLevels.L1ToL2.BytesIn = m.CompactionL1ToL2InputBytes.Load()
 	snap.CompactionLevels.L1ToL2.BytesOut = m.CompactionL1ToL2Bytes.Load()
 	snap.CompactionLevels.L2ToL3.Runs = m.CompactionL2ToL3Runs.Load()
+	snap.CompactionLevels.L2ToL3.BytesIn = m.CompactionL2ToL3InputBytes.Load()
 	snap.CompactionLevels.L2ToL3.BytesOut = m.CompactionL2ToL3Bytes.Load()
+	snap.CompactionLevels.IntraL0.Runs = m.CompactionIntraL0Runs.Load()
 
 	snap.Cache.Hits = m.CacheHits.Load()
 	snap.Cache.Misses = m.CacheMisses.Load()
