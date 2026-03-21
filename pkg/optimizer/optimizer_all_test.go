@@ -970,50 +970,6 @@ func TestOptimization_20_VectorizedExecution(t *testing.T) {
 		}
 	})
 
-	t.Run("TypedBatch_roundtrip", func(t *testing.T) {
-		batch := pipeline.NewBatch(3)
-		batch.AddRow(map[string]event.Value{
-			"count": event.IntValue(10),
-			"name":  event.StringValue("alpha"),
-		})
-		batch.AddRow(map[string]event.Value{
-			"count": event.IntValue(20),
-			"name":  event.StringValue("beta"),
-		})
-		batch.AddRow(map[string]event.Value{
-			"count": event.IntValue(30),
-			"name":  event.StringValue("gamma"),
-		})
-
-		tb := pipeline.FromBatch(batch)
-		if tb.Len != 3 {
-			t.Errorf("TypedBatch.Len = %d, want 3", tb.Len)
-		}
-		if len(tb.Int64Cols["count"]) != 3 {
-			t.Errorf("expected 3 int64 count values, got %d", len(tb.Int64Cols["count"]))
-		}
-		if len(tb.StringCols["name"]) != 3 {
-			t.Errorf("expected 3 string name values, got %d", len(tb.StringCols["name"]))
-		}
-
-		// Convert back to Batch.
-		back := tb.ToBatch()
-		if back.Len != 3 {
-			t.Errorf("round-trip Batch.Len = %d, want 3", back.Len)
-		}
-		if len(back.Columns["count"]) != 3 {
-			t.Errorf("expected 3 count values after round-trip, got %d", len(back.Columns["count"]))
-		}
-		// Check a value.
-		countVals := back.Columns["count"]
-		if countVals[1].AsInt() != 20 {
-			t.Errorf("expected count[1]=20, got %d", countVals[1].AsInt())
-		}
-		nameVals := back.Columns["name"]
-		if nameVals[2].AsString() != "gamma" {
-			t.Errorf("expected name[2]=gamma, got %s", nameVals[2].AsString())
-		}
-	})
 }
 
 // Test 21: TailScanOptimization

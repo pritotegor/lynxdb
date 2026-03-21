@@ -222,11 +222,12 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.Handle("GET /metrics", promMetrics.Handler())
 
 	// pprof debug endpoints for live CPU/memory profiling.
-	mux.HandleFunc("GET /debug/pprof/", pprof.Index)
-	mux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
+	// Authenticated via KeyAuthMiddleware (under /api/v1/ prefix).
+	mux.HandleFunc("GET /api/v1/debug/pprof/", pprof.Index)
+	mux.HandleFunc("GET /api/v1/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("GET /api/v1/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("GET /api/v1/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("GET /api/v1/debug/pprof/trace", pprof.Trace)
 
 	// Query endpoint (three-mode: sync/hybrid/async).
 	mux.HandleFunc("POST /api/v1/query", s.handleQuery)
@@ -272,6 +273,7 @@ func NewServer(cfg Config) (*Server, error) {
 	registerCRUD(mux, "/api/v1/queries", CRUDOpts[savedqueries.SavedQuery, *savedqueries.SavedQueryInput]{
 		Store:       s.queryStore,
 		ConflictErr: savedqueries.ErrAlreadyExists,
+		ServerRef:   s,
 		NewEntity: func(input *savedqueries.SavedQueryInput) *savedqueries.SavedQuery {
 			return input.ToSavedQuery()
 		},
@@ -293,6 +295,7 @@ func NewServer(cfg Config) (*Server, error) {
 	registerCRUD(mux, "/api/v1/dashboards", CRUDOpts[dashboards.Dashboard, dashboards.DashboardInput]{
 		Store:       s.dashboardStore,
 		ConflictErr: dashboards.ErrDashboardAlreadyExists,
+		ServerRef:   s,
 		NewEntity: func(input dashboards.DashboardInput) *dashboards.Dashboard {
 			return input.ToDashboard()
 		},

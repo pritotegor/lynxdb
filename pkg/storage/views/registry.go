@@ -14,9 +14,10 @@ const viewsFile = "views.json"
 
 // ViewRegistry manages view definitions with persistent storage.
 type ViewRegistry struct {
-	mu    sync.RWMutex
-	views map[string]ViewDefinition
-	dir   string
+	mu        sync.RWMutex
+	persistMu sync.Mutex // serializes disk writes (separate from data lock)
+	views     map[string]ViewDefinition
+	dir       string
 }
 
 // Open loads or creates a view registry in the given directory.
@@ -58,15 +59,24 @@ func (r *ViewRegistry) Create(def ViewDefinition) error {
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	if _, exists := r.views[def.Name]; exists {
+		r.mu.Unlock()
+
 		return ErrViewAlreadyExists
 	}
 
 	r.views[def.Name] = def
+	data, err := r.snapshotLocked()
+	r.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return r.persistLocked()
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
+
+	return r.persist(data)
 }
 
 // Get returns a view definition by name.
@@ -101,30 +111,50 @@ func (r *ViewRegistry) List() []ViewDefinition {
 // Update replaces an existing view definition.
 func (r *ViewRegistry) Update(def ViewDefinition) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	if _, exists := r.views[def.Name]; !exists {
+		r.mu.Unlock()
+
 		return ErrViewNotFound
 	}
 
 	r.views[def.Name] = def
+	data, err := r.snapshotLocked()
+	r.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return r.persistLocked()
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
+
+	return r.persist(data)
 }
 
 // Drop removes a view definition and its data directory.
 func (r *ViewRegistry) Drop(name string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	if _, exists := r.views[name]; !exists {
+		r.mu.Unlock()
+
 		return ErrViewNotFound
 	}
 
 	delete(r.views, name)
-	if err := r.persistLocked(); err != nil {
+	data, err := r.snapshotLocked()
+	r.mu.Unlock()
+	if err != nil {
 		return err
 	}
+
+	r.persistMu.Lock()
+	if err := r.persist(data); err != nil {
+		r.persistMu.Unlock()
+
+		return err
+	}
+	r.persistMu.Unlock()
 
 	// Remove view data directory if it exists.
 	viewDir := filepath.Join(filepath.Dir(r.dir), name)
@@ -138,14 +168,13 @@ func (r *ViewRegistry) Drop(name string) error {
 }
 
 // Close is a no-op. The registry does not hold open file handles between
-// operations — views.json is written atomically via tmp+rename in persistLocked.
+// operations — views.json is written atomically via tmp+rename in persist.
 func (r *ViewRegistry) Close() error {
 	return nil
 }
 
-// persistLocked writes the views to disk atomically with full durability.
-// Caller must hold r.mu.
-func (r *ViewRegistry) persistLocked() error {
+// snapshotLocked marshals the current views to JSON. Caller must hold r.mu.
+func (r *ViewRegistry) snapshotLocked() ([]byte, error) {
 	defs := make([]ViewDefinition, 0, len(r.views))
 	for _, d := range r.views {
 		defs = append(defs, d)
@@ -156,9 +185,15 @@ func (r *ViewRegistry) persistLocked() error {
 
 	data, err := json.MarshalIndent(defs, "", "  ")
 	if err != nil {
-		return fmt.Errorf("views: marshal: %w", err)
+		return nil, fmt.Errorf("views: marshal: %w", err)
 	}
 
+	return data, nil
+}
+
+// persist writes pre-marshaled data to disk atomically with full durability.
+// Called WITHOUT the lock held.
+func (r *ViewRegistry) persist(data []byte) error {
 	path := filepath.Join(r.dir, viewsFile)
 	tmp := path + ".tmp"
 

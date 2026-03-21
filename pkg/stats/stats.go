@@ -16,7 +16,6 @@ const (
 	ScanTypeIndexScan    = "index_scan"
 	ScanTypeFilteredScan = "filtered_scan"
 	ScanTypeFullScan     = "full_scan"
-	ScanTypeEphemeral    = "ephemeral"
 )
 
 // QueryStats holds all metrics collected during query execution.

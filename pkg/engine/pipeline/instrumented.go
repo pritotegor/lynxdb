@@ -159,16 +159,6 @@ type InstrumentedFilterIterator struct {
 	duration   time.Duration
 }
 
-// WrapInstrumentedFilter wraps a filter iterator, linking it to its
-// instrumented child so we can compute input rows as the child's output.
-func WrapInstrumentedFilter(iter Iterator, name string, child *InstrumentedIterator) *InstrumentedFilterIterator {
-	return &InstrumentedFilterIterator{
-		inner: iter,
-		child: child,
-		name:  name,
-	}
-}
-
 // Init delegates to the wrapped iterator.
 func (fi *InstrumentedFilterIterator) Init(ctx context.Context) error {
 	return fi.inner.Init(ctx)

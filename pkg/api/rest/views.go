@@ -5,11 +5,15 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/storage/views"
 	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
 func (s *Server) handleCreateMV(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	var req struct {
 		Name      string `json:"name"`
 		Query     string `json:"query"`
@@ -98,6 +102,9 @@ func (s *Server) handleGetMV(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteMV(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	name, ok := requirePathValue(r, w, "name")
 	if !ok {
 		return
@@ -116,6 +123,9 @@ func (s *Server) handleDeleteMV(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePatchView(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	name, ok := requirePathValue(r, w, "name")
 	if !ok {
 		return
@@ -153,6 +163,9 @@ func (s *Server) handlePatchView(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleViewBackfill(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	name, ok := requirePathValue(r, w, "name")
 	if !ok {
 		return

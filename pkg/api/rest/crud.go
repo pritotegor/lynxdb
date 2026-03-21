@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/lynxbase/lynxdb/pkg/auth"
 )
 
 // CRUDStore defines the interface for a generic CRUD store.
@@ -22,6 +24,14 @@ type CRUDOpts[T any, Input any] struct {
 	ConflictErr error              // error indicating duplicate/conflict
 	NewEntity   func(Input) *T     // converts validated input to entity
 	MergeEntity func(*T, Input) *T // merges input into existing entity
+
+	// ServerRef provides access to the server for auth checks.
+	// Required so that write endpoints can enforce scope.
+	ServerRef *Server
+
+	// MutateScope is the scope required for create/update/delete operations.
+	// If empty, defaults to ScopeAdmin.
+	MutateScope auth.Scope
 }
 
 // registerCRUD registers standard List/Create/Get/Update/Delete endpoints.
@@ -36,6 +46,11 @@ func registerCRUD[T any, Input interface{ Validate() error }](
 	if idParam == "" {
 		idParam = "id"
 	}
+	mutateScope := opts.MutateScope
+	if mutateScope == "" {
+		mutateScope = auth.ScopeAdmin
+	}
+	requireAuth := opts.ServerRef != nil
 
 	// GET basePath — list all
 	mux.HandleFunc("GET "+basePath, func(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +59,9 @@ func registerCRUD[T any, Input interface{ Validate() error }](
 
 	// POST basePath — create
 	mux.HandleFunc("POST "+basePath, func(w http.ResponseWriter, r *http.Request) {
+		if requireAuth && !opts.ServerRef.requireScope(w, r, mutateScope) {
+			return
+		}
 		var input Input
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")
@@ -83,6 +101,9 @@ func registerCRUD[T any, Input interface{ Validate() error }](
 
 	// PUT basePath/{id} — update
 	mux.HandleFunc("PUT "+basePath+"/{"+idParam+"}", func(w http.ResponseWriter, r *http.Request) {
+		if requireAuth && !opts.ServerRef.requireScope(w, r, mutateScope) {
+			return
+		}
 		id := r.PathValue(idParam)
 		existing, err := opts.Store.Get(id)
 		if err != nil {
@@ -112,6 +133,9 @@ func registerCRUD[T any, Input interface{ Validate() error }](
 
 	// DELETE basePath/{id} — delete
 	mux.HandleFunc("DELETE "+basePath+"/{"+idParam+"}", func(w http.ResponseWriter, r *http.Request) {
+		if requireAuth && !opts.ServerRef.requireScope(w, r, mutateScope) {
+			return
+		}
 		id := r.PathValue(idParam)
 		if err := opts.Store.Delete(id); err != nil {
 			respondError(w, ErrCodeNotFound, http.StatusNotFound, err.Error())

@@ -2,7 +2,9 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -368,7 +370,7 @@ func (c *Coordinator) queryShardPartialAgg(
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
-			if err.Error() == "EOF" {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			// Check for clean stream end.
@@ -376,6 +378,7 @@ func (c *Coordinator) queryShardPartialAgg(
 				return groups, ctx.Err()
 			}
 
+			slog.Warn("cluster: partial agg stream error (swallowed)", "error", err)
 			break
 		}
 

@@ -46,6 +46,14 @@ const maxValuesPerGroup = 100_000
 // loading all groups simultaneously. Must be >= 1.
 const mergePartitionsLegacy = 16
 
+// hllPromotionThreshold is the cardinality at which exact tracking is
+// promoted to HyperLogLog approximation for distinct count.
+const hllPromotionThreshold = 10_000
+
+// defaultTDigestCompression is the compression parameter for t-digest
+// percentile estimation. Higher values = more accurate but more memory.
+const defaultTDigestCompression = 100.0
+
 // Memory estimation constants for operator tracking.
 // These are deliberately conservative (over-estimates) to avoid under-counting.
 const (
@@ -561,7 +569,7 @@ func (a *AggregateIterator) updateState(s *aggState, fn string, val event.Value)
 			str := val.String()
 			s.values[str] = true
 			// Switch to HLL when cardinality exceeds threshold.
-			if len(s.values) > 10000 && s.hll == nil {
+			if len(s.values) > hllPromotionThreshold && s.hll == nil {
 				s.hll = NewHyperLogLog()
 				for k := range s.values {
 					s.hll.Add(k)
@@ -592,7 +600,7 @@ func (a *AggregateIterator) updateState(s *aggState, fn string, val event.Value)
 	case aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:
 		if f, ok := vm.ValueToFloat(val); ok {
 			if s.tdigest == nil {
-				s.tdigest = NewTDigest(100)
+				s.tdigest = NewTDigest(defaultTDigestCompression)
 			}
 			s.tdigest.Add(f)
 			// Keep exact values only for small datasets; t-digest handles large ones.
@@ -838,59 +846,6 @@ func (a *AggregateIterator) mergeSpillFilesPartitioned() *Batch {
 	return result
 }
 
-// mergeSpillFilesSimple reads back all spill files and loads ALL unique groups
-// into memory simultaneously. This is the pre-partitioned approach kept as a
-// reference. For production use, mergeSpillFilesPartitioned is preferred as it
-// bounds merge memory to totalGroups/K.
-//
-// DEPRECATED: Use mergeSpillFilesPartitioned instead.
-func (a *AggregateIterator) mergeSpillFilesSimple() {
-	// Track pre-merge group count to detect unbounded growth.
-	preGroups := a.groupCount
-	peakBudget := a.acct.MaxUsed()
-
-	for _, path := range a.spillFiles {
-		sr, err := NewSpillReader(path)
-		if err != nil {
-			continue
-		}
-		for {
-			row, err := sr.ReadRow()
-			if errors.Is(err, io.EOF) || row == nil {
-				break
-			}
-			if err != nil {
-				break
-			}
-			h := a.groupKeyHash(row)
-			group := a.findOrCreateGroupMerge(h, row)
-			a.mergeAggStateFromSpillRow(group, row)
-		}
-		sr.Close()
-
-		// Release through manager if available, else direct remove.
-		if a.spillMgr != nil {
-			a.spillMgr.Release(path)
-		} else {
-			os.Remove(path)
-		}
-	}
-	a.spillFiles = nil
-
-	// Warn if merge phase loaded significantly more groups than the spill budget
-	// allowed. This indicates the query has very high cardinality across spill
-	// batches and would benefit from partitioned external aggregation.
-	mergeGroupBytes := int64(a.groupCount-preGroups) * (estimatedKeyBytes + estimatedAggStateBytes)
-	if peakBudget > 0 && mergeGroupBytes > 2*peakBudget {
-		slog.Warn("aggregate merge loaded groups exceeding 2x the original budget; "+
-			"consider adding filters to reduce cardinality or increasing max_query_memory_bytes",
-			"merge_groups", a.groupCount-preGroups,
-			"merge_estimated_bytes", mergeGroupBytes,
-			"peak_budget_bytes", peakBudget,
-		)
-	}
-}
-
 // mergeAggStateFromSpillRow merges aggregation state from a legacy spill row
 // into an existing aggGroup. Handles all agg types with their suffixed-key
 // serialization format. This is the legacy counterpart of mergeAggStateFromRow
@@ -1005,7 +960,7 @@ func (a *AggregateIterator) mergeDCFromRow(s *aggState, row map[string]event.Val
 				}
 				s.values[p] = true
 				// Promote to HLL if exact set gets too large.
-				if len(s.values) > 10000 {
+				if len(s.values) > hllPromotionThreshold {
 					s.hll = NewHyperLogLog()
 					for k := range s.values {
 						s.hll.Add(k)
@@ -1100,7 +1055,7 @@ func (a *AggregateIterator) mergePercFromRow(s *aggState, row map[string]event.V
 			other := UnmarshalTDigest(data)
 			if other != nil {
 				if s.tdigest == nil {
-					s.tdigest = NewTDigest(100)
+					s.tdigest = NewTDigest(defaultTDigestCompression)
 				}
 				s.tdigest.Merge(other)
 				merged = true
@@ -1113,7 +1068,7 @@ func (a *AggregateIterator) mergePercFromRow(s *aggState, row map[string]event.V
 			pvStr, _ := pvVal.TryAsString()
 			floats := parseFloatList(pvStr, "|")
 			if s.tdigest == nil {
-				s.tdigest = NewTDigest(100)
+				s.tdigest = NewTDigest(defaultTDigestCompression)
 			}
 			for _, f := range floats {
 				s.tdigest.Add(f)
@@ -1162,31 +1117,31 @@ func (a *AggregateIterator) finalizeState(s *aggState, fn string) event.Value {
 	case "last", "latest":
 		return s.last
 	case aggPerc50:
-		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > 10000) {
+		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > hllPromotionThreshold) {
 			return event.FloatValue(s.tdigest.Quantile(0.50))
 		}
 
 		return percentile(s.all, 50)
 	case aggPerc75:
-		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > 10000) {
+		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > hllPromotionThreshold) {
 			return event.FloatValue(s.tdigest.Quantile(0.75))
 		}
 
 		return percentile(s.all, 75)
 	case aggPerc90:
-		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > 10000) {
+		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > hllPromotionThreshold) {
 			return event.FloatValue(s.tdigest.Quantile(0.90))
 		}
 
 		return percentile(s.all, 90)
 	case aggPerc95:
-		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > 10000) {
+		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > hllPromotionThreshold) {
 			return event.FloatValue(s.tdigest.Quantile(0.95))
 		}
 
 		return percentile(s.all, 95)
 	case aggPerc99:
-		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > 10000) {
+		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > hllPromotionThreshold) {
 			return event.FloatValue(s.tdigest.Quantile(0.99))
 		}
 

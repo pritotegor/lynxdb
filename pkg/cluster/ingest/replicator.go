@@ -38,6 +38,10 @@ func ParseAckLevel(s string) AckLevel {
 	}
 }
 
+// maxAsyncReplicateGoroutines caps concurrent fire-and-forget replication
+// goroutines to prevent unbounded goroutine growth during network partitions.
+const maxAsyncReplicateGoroutines = 64
+
 // BatcherReplicator replicates event batches to ISR peer nodes after
 // the primary commits locally. It supports three ack levels:
 //   - AckNone: fire-and-forget replication (async, best-effort)
@@ -51,6 +55,7 @@ type BatcherReplicator struct {
 	ackLevel   AckLevel
 	isrTracker *ISRTracker
 	logger     *slog.Logger
+	asyncSem   chan struct{} // bounds concurrent fire-and-forget goroutines
 }
 
 // NewBatcherReplicator creates a new replicator.
@@ -67,6 +72,7 @@ func NewBatcherReplicator(
 		ackLevel:   ackLevel,
 		isrTracker: tracker,
 		logger:     logger,
+		asyncSem:   make(chan struct{}, maxAsyncReplicateGoroutines),
 	}
 }
 
@@ -115,20 +121,28 @@ func (r *BatcherReplicator) ReplicateBatch(
 
 	switch r.ackLevel {
 	case AckNone, AckOne:
-		// Fire-and-forget: send in goroutines, don't wait.
-		// Log failures at WARN level for observability — silent replication
-		// failures are invisible to operators otherwise.
+		// Fire-and-forget: send in goroutines with bounded concurrency.
+		// If the semaphore is full, drop the replication attempt and log a warning.
 		for _, peer := range peers {
 			peer := peer
-			go func() {
-				if err := r.sendToReplica(ctx, peer, peerAddrs[peer], shardID, entry); err != nil {
-					r.logger.Warn("async replication failed",
-						"shard_id", shardID,
-						"peer", peer,
-						"ack_level", r.ackLevel,
-						"error", err)
-				}
-			}()
+			select {
+			case r.asyncSem <- struct{}{}:
+				go func() {
+					defer func() { <-r.asyncSem }()
+					if err := r.sendToReplica(ctx, peer, peerAddrs[peer], shardID, entry); err != nil {
+						r.logger.Warn("async replication failed",
+							"shard_id", shardID,
+							"peer", peer,
+							"ack_level", r.ackLevel,
+							"error", err)
+					}
+				}()
+			default:
+				r.logger.Warn("async replication dropped: concurrency limit reached",
+					"shard_id", shardID,
+					"peer", peer,
+					"limit", maxAsyncReplicateGoroutines)
+			}
 		}
 
 		return nil

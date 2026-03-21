@@ -150,9 +150,11 @@ func handlePlanError(w http.ResponseWriter, err error) {
 	if planner.IsParseError(err) {
 		pe := func() *planner.ParseError {
 			target := &planner.ParseError{}
-			_ = errors.As(err, &target)
+			if errors.As(err, &target) {
+				return target
+			}
 
-			return target
+			return &planner.ParseError{Message: err.Error()}
 		}()
 		respondError(w, ErrCodeInvalidQuery, http.StatusBadRequest, "parse error: "+pe.Message,
 			WithSuggestion(pe.Suggestion))

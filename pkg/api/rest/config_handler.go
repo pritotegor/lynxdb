@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	s.cfgMu.RLock()
 	cfg := s.runtimeCfg
 	s.cfgMu.RUnlock()
@@ -15,6 +19,9 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRoot(w, r) {
+		return
+	}
 	var patch map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")

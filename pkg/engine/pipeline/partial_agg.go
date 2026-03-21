@@ -657,7 +657,7 @@ func updatePartialState(s *PartialAggState, fn string, val event.Value) {
 	case aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:
 		if f, ok := vm.ValueToFloat(val); ok {
 			if s.Digest == nil {
-				s.Digest = NewTDigest(100)
+				s.Digest = NewTDigest(defaultTDigestCompression)
 			}
 			s.Digest.Add(f)
 		}
@@ -738,7 +738,7 @@ func mergePartialState(dst, src *PartialAggState, fn string) {
 	case aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:
 		if src.Digest != nil {
 			if dst.Digest == nil {
-				dst.Digest = NewTDigest(100)
+				dst.Digest = NewTDigest(defaultTDigestCompression)
 			}
 			dst.Digest.Merge(src.Digest)
 		}

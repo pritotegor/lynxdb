@@ -34,10 +34,15 @@ func applyBudgetAndCPUStats(st *stats.QueryStats, budget *memgov.BudgetAdapter, 
 
 const defaultIndex = "main"
 
+// EphemeralMaxEvents caps total in-memory events for the ephemeral engine
+// to prevent OOM when piping large files. Default: 10M events (~2-5GB depending on line length).
+const EphemeralMaxEvents = 10_000_000
+
 // EngineConfig configures a StorageEngine.
 type EngineConfig struct {
-	DataDir string
-	Storage config.StorageConfig
+	DataDir   string
+	Storage   config.StorageConfig
+	MaxEvents int // 0 = use EphemeralMaxEvents
 }
 
 // Engine is the unified storage engine for LynxDB.
@@ -57,6 +62,7 @@ type Engine struct {
 	pipe          *ingestpipeline.Pipeline
 	closed        bool
 	totalRawBytes int64 // cumulative raw bytes ingested (sum of line lengths)
+	maxEvents     int   // max total events (0 = unlimited for persistent engines)
 }
 
 // NewEngine creates a StorageEngine configured by the given config.
@@ -65,11 +71,17 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	profile := ResolveProfile(cfg.DataDir, cfg.Storage.S3Bucket)
 	features := Features(profile)
 
+	maxEv := cfg.MaxEvents
+	if maxEv == 0 && profile == Ephemeral {
+		maxEv = EphemeralMaxEvents
+	}
+
 	return &Engine{
-		profile:  profile,
-		features: features,
-		events:   make(map[string][]*event.Event),
-		pipe:     ingestpipeline.DefaultPipeline(),
+		profile:   profile,
+		features:  features,
+		events:    make(map[string][]*event.Event),
+		pipe:      ingestpipeline.DefaultPipeline(),
+		maxEvents: maxEv,
 	}, nil
 }
 
@@ -77,10 +89,11 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 // Primary constructor for CLI file/stdin queries.
 func NewEphemeralEngine() *Engine {
 	return &Engine{
-		profile:  Ephemeral,
-		features: Features(Ephemeral),
-		events:   make(map[string][]*event.Event),
-		pipe:     ingestpipeline.DefaultPipeline(),
+		profile:   Ephemeral,
+		features:  Features(Ephemeral),
+		events:    make(map[string][]*event.Event),
+		pipe:      ingestpipeline.DefaultPipeline(),
+		maxEvents: EphemeralMaxEvents,
 	}
 }
 
@@ -217,6 +230,16 @@ func (e *Engine) processBatchWith(pipe *ingestpipeline.Pipeline, events []*event
 	processed, err := pipe.Process(events)
 	if err != nil {
 		return 0, fmt.Errorf("pipeline: %w", err)
+	}
+
+	if e.maxEvents > 0 {
+		total := 0
+		for _, evts := range e.events {
+			total += len(evts)
+		}
+		if total+len(processed) > e.maxEvents {
+			return 0, fmt.Errorf("ephemeral engine event limit reached (%d events); use --file with a persistent server for large datasets", e.maxEvents)
+		}
 	}
 
 	for _, ev := range processed {

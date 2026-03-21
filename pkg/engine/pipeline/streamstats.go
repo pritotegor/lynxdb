@@ -16,7 +16,7 @@ import (
 // map entry overhead (~48B).
 const estimatedRingBufferOverhead int64 = 112
 
-// StreamStatsIterator implements rolling window aggregation.
+// StreamStatsIterator implements rolling window aggregation with O(N) incremental updates.
 type StreamStatsIterator struct {
 	child    Iterator
 	aggs     []AggFunc
@@ -24,7 +24,17 @@ type StreamStatsIterator struct {
 	window   int
 	current  bool
 	ringBufs map[string]*ringBuffer
-	acct     memgov.MemoryAccount // per-operator memory tracking
+	acct     memgov.MemoryAccount          // per-operator memory tracking
+	running  map[string][]*runningAggState // per-group, per-aggregate running state
+}
+
+// runningAggState maintains incremental aggregate state for O(1) per-row updates.
+type runningAggState struct {
+	sum    float64
+	count  int64
+	minVal event.Value
+	maxVal event.Value
+	freq   map[string]int64 // for dc: value → frequency
 }
 
 type ringBuffer struct {
@@ -90,6 +100,7 @@ func NewStreamStatsIterator(child Iterator, aggs []AggFunc, groupBy []string, wi
 		current:  current,
 		ringBufs: make(map[string]*ringBuffer),
 		acct:     memgov.NopAccount(),
+		running:  make(map[string][]*runningAggState),
 	}
 }
 
@@ -131,12 +142,22 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 					return nil, fmt.Errorf("streamstats: memory budget exceeded (window pre-alloc): %w", err)
 				}
 			}
+			// Initialize running aggregate state for this group.
+			states := make([]*runningAggState, len(s.aggs))
+			for j, agg := range s.aggs {
+				states[j] = newRunningAggState(agg.Name)
+			}
+			s.running[key] = states
 		}
+		states := s.running[key]
 
+		// Determine which row is being evicted (if window is full).
+		var evictedRow map[string]event.Value
 		if s.current {
-			// For unlimited window, each append grows memory; for bounded
-			// window not yet full, track the new slot. At capacity, the add
-			// replaces an existing slot — memory-neutral.
+			if rb.capacity > 0 && rb.count >= rb.capacity {
+				// Window is full: the oldest entry will be overwritten.
+				evictedRow = rb.oldest()
+			}
 			if rb.capacity == 0 || rb.count < rb.capacity {
 				if err := s.acct.Grow(estimatedRowBytes); err != nil {
 					return nil, fmt.Errorf("streamstats: memory budget exceeded (current window grow): %w", err)
@@ -145,10 +166,19 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 			rb.add(row)
 		}
 
-		// Compute aggregates over window
-		items := rb.items()
-		for _, agg := range s.aggs {
-			val := s.computeAgg(agg, items)
+		// Incremental aggregate update: add new row, evict old if applicable.
+		for j, agg := range s.aggs {
+			if evictedRow != nil {
+				removeValueFromRunning(states[j], agg, evictedRow)
+			}
+			addValueToRunning(states[j], agg, row)
+			var val event.Value
+			if strings.EqualFold(agg.Name, aggValues) {
+				// Values aggregate requires full scan for order-preserving dedup.
+				val = s.computeAgg(agg, rb.items())
+			} else {
+				val = readRunningAgg(states[j], agg, rb)
+			}
 			row[agg.Alias] = val
 			if _, exists := batch.Columns[agg.Alias]; !exists {
 				batch.Columns[agg.Alias] = make([]event.Value, batch.Len)
@@ -157,12 +187,23 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 		}
 
 		if !s.current {
+			// Trailing window: add after computing.
+			var willEvict map[string]event.Value
+			if rb.capacity > 0 && rb.count >= rb.capacity {
+				willEvict = rb.oldest()
+			}
 			if rb.capacity == 0 || rb.count < rb.capacity {
 				if err := s.acct.Grow(estimatedRowBytes); err != nil {
 					return nil, fmt.Errorf("streamstats: memory budget exceeded (trailing window grow): %w", err)
 				}
 			}
 			rb.add(row)
+			for j, agg := range s.aggs {
+				if willEvict != nil {
+					removeValueFromRunning(states[j], agg, willEvict)
+				}
+				addValueToRunning(states[j], agg, row)
+			}
 		}
 	}
 
@@ -172,11 +213,188 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 func (s *StreamStatsIterator) Close() error {
 	s.acct.Close()
 	s.ringBufs = nil
+	s.running = nil
 
 	return s.child.Close()
 }
 
 func (s *StreamStatsIterator) Schema() []FieldInfo { return s.child.Schema() }
+
+// oldest returns the oldest entry in the ring buffer without removing it.
+// Returns nil if the buffer is empty.
+func (r *ringBuffer) oldest() map[string]event.Value {
+	if r.count == 0 {
+		return nil
+	}
+	if r.capacity == 0 {
+		return r.buf[0]
+	}
+	start := r.pos - r.count
+	if start < 0 {
+		start += len(r.buf)
+	}
+
+	return r.buf[start]
+}
+
+// newRunningAggState creates an initialized running state for the given aggregate.
+func newRunningAggState(aggName string) *runningAggState {
+	st := &runningAggState{}
+	if strings.EqualFold(aggName, "dc") {
+		st.freq = make(map[string]int64)
+	}
+
+	return st
+}
+
+// addValueToRunning incorporates a new row's field value into the running aggregate.
+func addValueToRunning(st *runningAggState, agg AggFunc, row map[string]event.Value) {
+	switch strings.ToLower(agg.Name) {
+	case aggCount:
+		if agg.Field == "" {
+			st.count++
+		} else if v, ok := row[agg.Field]; ok && !v.IsNull() {
+			st.count++
+		}
+	case aggSum:
+		if v, ok := row[agg.Field]; ok {
+			if f, fok := vm.ValueToFloat(v); fok {
+				st.sum += f
+				st.count++
+			}
+		}
+	case aggAvg:
+		if v, ok := row[agg.Field]; ok {
+			if f, fok := vm.ValueToFloat(v); fok {
+				st.sum += f
+				st.count++
+			}
+		}
+	case aggMin:
+		if v, ok := row[agg.Field]; ok && !v.IsNull() {
+			if st.minVal.IsNull() || vm.CompareValues(v, st.minVal) < 0 {
+				st.minVal = v
+			}
+			st.count++
+		}
+	case aggMax:
+		if v, ok := row[agg.Field]; ok && !v.IsNull() {
+			if st.maxVal.IsNull() || vm.CompareValues(v, st.maxVal) > 0 {
+				st.maxVal = v
+			}
+			st.count++
+		}
+	case "dc":
+		if v, ok := row[agg.Field]; ok && !v.IsNull() {
+			st.freq[v.String()]++
+			st.count++
+		}
+	case aggValues:
+		// Values aggregate still requires full scan for correctness (dedup + order).
+		// Fall through to readRunningAgg which does the scan.
+		st.count++
+	}
+}
+
+// removeValueFromRunning removes a row's field value from the running aggregate.
+func removeValueFromRunning(st *runningAggState, agg AggFunc, row map[string]event.Value) {
+	switch strings.ToLower(agg.Name) {
+	case aggCount:
+		if agg.Field == "" {
+			st.count--
+		} else if v, ok := row[agg.Field]; ok && !v.IsNull() {
+			st.count--
+		}
+	case aggSum:
+		if v, ok := row[agg.Field]; ok {
+			if f, fok := vm.ValueToFloat(v); fok {
+				st.sum -= f
+				st.count--
+			}
+		}
+	case aggAvg:
+		if v, ok := row[agg.Field]; ok {
+			if f, fok := vm.ValueToFloat(v); fok {
+				st.sum -= f
+				st.count--
+			}
+		}
+	case aggMin:
+		if v, ok := row[agg.Field]; ok && !v.IsNull() {
+			st.count--
+			// If we removed the current min, invalidate so next readRunningAgg recomputes.
+			if !st.minVal.IsNull() && vm.CompareValues(v, st.minVal) == 0 {
+				st.minVal = event.Value{} // invalidate
+			}
+		}
+	case aggMax:
+		if v, ok := row[agg.Field]; ok && !v.IsNull() {
+			st.count--
+			if !st.maxVal.IsNull() && vm.CompareValues(v, st.maxVal) == 0 {
+				st.maxVal = event.Value{} // invalidate
+			}
+		}
+	case "dc":
+		if v, ok := row[agg.Field]; ok && !v.IsNull() {
+			key := v.String()
+			st.freq[key]--
+			if st.freq[key] <= 0 {
+				delete(st.freq, key)
+			}
+			st.count--
+		}
+	case aggValues:
+		st.count--
+	}
+}
+
+// readRunningAgg returns the current aggregate value from the running state.
+// For min/max with invalidated state (after eviction of the extremum), rescans
+// the ring buffer to find the new extremum and updates the running state.
+func readRunningAgg(st *runningAggState, agg AggFunc, rb *ringBuffer) event.Value {
+	switch strings.ToLower(agg.Name) {
+	case aggCount:
+		return event.IntValue(st.count)
+	case aggSum:
+		return event.FloatValue(st.sum)
+	case aggAvg:
+		if st.count == 0 {
+			return event.NullValue()
+		}
+
+		return event.FloatValue(st.sum / float64(st.count))
+	case aggMin:
+		if st.minVal.IsNull() && st.count > 0 {
+			// Min was evicted — rescan window to find new minimum.
+			for _, item := range rb.items() {
+				if v, ok := item[agg.Field]; ok && !v.IsNull() {
+					if st.minVal.IsNull() || vm.CompareValues(v, st.minVal) < 0 {
+						st.minVal = v
+					}
+				}
+			}
+		}
+
+		return st.minVal
+	case aggMax:
+		if st.maxVal.IsNull() && st.count > 0 {
+			// Max was evicted — rescan window to find new maximum.
+			for _, item := range rb.items() {
+				if v, ok := item[agg.Field]; ok && !v.IsNull() {
+					if st.maxVal.IsNull() || vm.CompareValues(v, st.maxVal) > 0 {
+						st.maxVal = v
+					}
+				}
+			}
+		}
+
+		return st.maxVal
+	case "dc":
+		return event.IntValue(int64(len(st.freq)))
+	}
+
+	return event.NullValue()
+}
 
 // groupKey builds a composite key from the BY-clause fields of a row.
 //

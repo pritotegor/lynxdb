@@ -20,9 +20,6 @@ package upgrade
 import "errors"
 
 var (
-	// ErrAlreadyLatest indicates the current version is already the latest.
-	ErrAlreadyLatest = errors.New("already running the latest version")
-
 	// ErrPlatformNotFound indicates no build is available for the current platform.
 	ErrPlatformNotFound = errors.New("no build available for this platform")
 

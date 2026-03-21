@@ -121,6 +121,10 @@ func KeyAuthMiddleware(ks *auth.KeyStore, next http.Handler) http.Handler {
 
 		// Fallback: accept token via query parameter for clients that cannot
 		// set headers (e.g. browser EventSource used for SSE live tail).
+		// SECURITY: Tokens in query parameters are inherently risky — they may
+		// appear in proxy logs, CDN logs, browser history, and Referer headers.
+		// Use short-lived tokens for SSE clients. The token is redacted from
+		// r.URL.RawQuery below to limit exposure in downstream middleware.
 		if header == "" {
 			if qToken := r.URL.Query().Get("_token"); qToken != "" {
 				header = "Bearer " + qToken

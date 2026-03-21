@@ -3,6 +3,7 @@ package event
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 )
@@ -89,17 +90,17 @@ func (v Value) Type() FieldType { return v.typ }
 // IsNull returns true if the value is null.
 func (v Value) IsNull() bool { return v.typ == FieldTypeNull }
 
-// AsString returns the string value or panics if not a string.
-//
-// Deprecated: Use AsStringE or TryAsString in new code. This method panics on
-// type mismatch and should only be called when the type is statically guaranteed.
+// AsString returns the string value or the zero value if not a string.
+// This method no longer panics on type mismatch; it logs a warning and returns "".
+// Prefer AsStringE or TryAsString for explicit error handling.
 func (v Value) AsString() string {
-	s, err := v.AsStringE()
-	if err != nil {
-		panic(err.Error())
+	if v.typ != FieldTypeString {
+		slog.Warn("AsString called on non-string value", "type", v.typ.String())
+
+		return ""
 	}
 
-	return s
+	return v.str
 }
 
 // AsStringE returns the string value or an error if not a string.
@@ -111,17 +112,17 @@ func (v Value) AsStringE() (string, error) {
 	return v.str, nil
 }
 
-// AsInt returns the int value or panics if not an int.
-//
-// Deprecated: Use AsIntE or TryAsInt in new code. This method panics on
-// type mismatch and should only be called when the type is statically guaranteed.
+// AsInt returns the int value or the zero value if not an int.
+// This method no longer panics on type mismatch; it logs a warning and returns 0.
+// Prefer AsIntE or TryAsInt for explicit error handling.
 func (v Value) AsInt() int64 {
-	n, err := v.AsIntE()
-	if err != nil {
-		panic(err.Error())
+	if v.typ != FieldTypeInt {
+		slog.Warn("AsInt called on non-int value", "type", v.typ.String())
+
+		return 0
 	}
 
-	return n
+	return v.num
 }
 
 // AsIntE returns the int value or an error if not an int.
@@ -133,17 +134,17 @@ func (v Value) AsIntE() (int64, error) {
 	return v.num, nil
 }
 
-// AsFloat returns the float value or panics if not a float.
-//
-// Deprecated: Use AsFloatE or TryAsFloat in new code. This method panics on
-// type mismatch and should only be called when the type is statically guaranteed.
+// AsFloat returns the float value or the zero value if not a float.
+// This method no longer panics on type mismatch; it logs a warning and returns 0.
+// Prefer AsFloatE or TryAsFloat for explicit error handling.
 func (v Value) AsFloat() float64 {
-	f, err := v.AsFloatE()
-	if err != nil {
-		panic(err.Error())
+	if v.typ != FieldTypeFloat {
+		slog.Warn("AsFloat called on non-float value", "type", v.typ.String())
+
+		return 0
 	}
 
-	return f
+	return v.flt
 }
 
 // AsFloatE returns the float value or an error if not a float.
@@ -155,17 +156,17 @@ func (v Value) AsFloatE() (float64, error) {
 	return v.flt, nil
 }
 
-// AsBool returns the bool value or panics if not a bool.
-//
-// Deprecated: Use AsBoolE or TryAsBool in new code. This method panics on
-// type mismatch and should only be called when the type is statically guaranteed.
+// AsBool returns the bool value or the zero value if not a bool.
+// This method no longer panics on type mismatch; it logs a warning and returns false.
+// Prefer AsBoolE or TryAsBool for explicit error handling.
 func (v Value) AsBool() bool {
-	b, err := v.AsBoolE()
-	if err != nil {
-		panic(err.Error())
+	if v.typ != FieldTypeBool {
+		slog.Warn("AsBool called on non-bool value", "type", v.typ.String())
+
+		return false
 	}
 
-	return b
+	return v.num != 0
 }
 
 // AsBoolE returns the bool value or an error if not a bool.
@@ -177,17 +178,17 @@ func (v Value) AsBoolE() (bool, error) {
 	return v.num != 0, nil
 }
 
-// AsTimestamp returns the timestamp value or panics if not a timestamp.
-//
-// Deprecated: Use AsTimestampE or TryAsTimestamp in new code. This method panics on
-// type mismatch and should only be called when the type is statically guaranteed.
+// AsTimestamp returns the timestamp value or the zero value if not a timestamp.
+// This method no longer panics on type mismatch; it logs a warning and returns time.Time{}.
+// Prefer AsTimestampE or TryAsTimestamp for explicit error handling.
 func (v Value) AsTimestamp() time.Time {
-	t, err := v.AsTimestampE()
-	if err != nil {
-		panic(err.Error())
+	if v.typ != FieldTypeTimestamp {
+		slog.Warn("AsTimestamp called on non-timestamp value", "type", v.typ.String())
+
+		return time.Time{}
 	}
 
-	return t
+	return time.Unix(0, v.num)
 }
 
 // AsTimestampE returns the timestamp value or an error if not a timestamp.

@@ -90,14 +90,14 @@ func parseExpiresIn(s string) (time.Duration, error) {
 
 	// Parse custom suffixes: d (days), w (weeks), y (years).
 	if len(s) < 2 {
-		return 0, fmt.Errorf("unsupported duration format")
+		return 0, fmt.Errorf("unsupported duration format: %q (expected Go duration like '24h' or suffixed like '7d', '1y')", s)
 	}
 
 	suffix := s[len(s)-1]
 	numStr := s[:len(s)-1]
 	var num int
 	if _, err := fmt.Sscanf(numStr, "%d", &num); err != nil || num <= 0 {
-		return 0, fmt.Errorf("unsupported duration format")
+		return 0, fmt.Errorf("unsupported duration format: %q (invalid number %q)", s, numStr)
 	}
 
 	switch suffix {
@@ -106,7 +106,8 @@ func parseExpiresIn(s string) (time.Duration, error) {
 	case 'w':
 		return time.Duration(num) * 7 * 24 * time.Hour, nil
 	case 'y':
-		return time.Duration(num) * 365 * 24 * time.Hour, nil
+		// 365.25 days per year to average out leap years.
+		return time.Duration(float64(num) * 365.25 * 24 * float64(time.Hour)), nil
 	default:
 		return 0, fmt.Errorf("unsupported duration suffix %q (use d, w, y, or Go duration)", string(suffix))
 	}
@@ -190,8 +191,13 @@ func (s *Server) handleRotateRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 // requireRoot checks that the request was authenticated with a root key.
+// When auth is disabled (no keyStore), all requests pass through.
 // Writes an error response and returns false if not.
 func (s *Server) requireRoot(w http.ResponseWriter, r *http.Request) bool {
+	// When auth is disabled (no keyStore), all requests pass through.
+	if s.keyStore == nil {
+		return true
+	}
 	if !auth.IsRoot(r.Context()) {
 		respondError(w, ErrCodeForbidden, http.StatusForbidden,
 			"This operation requires a root key")

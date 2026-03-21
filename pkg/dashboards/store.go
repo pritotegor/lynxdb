@@ -13,6 +13,7 @@ const dashboardsFile = "dashboards.json"
 
 type DashboardStore struct {
 	mu         sync.RWMutex
+	persistMu  sync.Mutex // serializes disk writes (separate from data lock)
 	dashboards map[string]*Dashboard
 	dir        string
 }
@@ -72,44 +73,72 @@ func (s *DashboardStore) Get(id string) (*Dashboard, error) {
 
 func (s *DashboardStore) Create(dash *Dashboard) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, existing := range s.dashboards {
 		if existing.Name == dash.Name {
+			s.mu.Unlock()
+
 			return ErrDashboardAlreadyExists
 		}
 	}
 	cp := *dash
 	s.dashboards[dash.ID] = &cp
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return s.persistLocked()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.persist(data)
 }
 
 func (s *DashboardStore) Update(dash *Dashboard) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if _, ok := s.dashboards[dash.ID]; !ok {
+		s.mu.Unlock()
+
 		return ErrDashboardNotFound
 	}
 	cp := *dash
 	s.dashboards[dash.ID] = &cp
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return s.persistLocked()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.persist(data)
 }
 
 func (s *DashboardStore) Delete(id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if _, ok := s.dashboards[id]; !ok {
+		s.mu.Unlock()
+
 		return ErrDashboardNotFound
 	}
 	delete(s.dashboards, id)
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return s.persistLocked()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.persist(data)
 }
 
-func (s *DashboardStore) persistLocked() error {
+// snapshotLocked marshals the current dashboards to JSON. Caller must hold s.mu.
+func (s *DashboardStore) snapshotLocked() ([]byte, error) {
 	if s.dir == "" {
-		return nil
+		return nil, nil
 	}
 	list := make([]*Dashboard, 0, len(s.dashboards))
 	for _, d := range s.dashboards {
@@ -118,7 +147,16 @@ func (s *DashboardStore) persistLocked() error {
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
-		return fmt.Errorf("dashboards: marshal: %w", err)
+		return nil, fmt.Errorf("dashboards: marshal: %w", err)
+	}
+
+	return data, nil
+}
+
+// persist writes pre-marshaled data to disk atomically. Called WITHOUT the lock held.
+func (s *DashboardStore) persist(data []byte) error {
+	if data == nil {
+		return nil
 	}
 	path := filepath.Join(s.dir, dashboardsFile)
 	tmp := path + ".tmp"

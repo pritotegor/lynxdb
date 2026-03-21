@@ -169,6 +169,10 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 			SourceType: sourcetype,
 		})
 		if closeErr := f.Close(); closeErr != nil {
+			if err != nil {
+				return fmt.Errorf("ingest %s: %w (also failed to close: %v)", path, err, closeErr)
+			}
+
 			return fmt.Errorf("close %s: %w", path, closeErr)
 		}
 		if err != nil {

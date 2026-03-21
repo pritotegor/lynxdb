@@ -83,6 +83,20 @@ func (b *Batch) Row(i int) map[string]event.Value {
 	return row
 }
 
+// RowInto fills dst with the fields for row i, reusing the map allocation.
+// Callers can pass the same dst across iterations to avoid per-row allocations.
+// The map is cleared before filling.
+func (b *Batch) RowInto(i int, dst map[string]event.Value) {
+	for k := range dst {
+		delete(dst, k)
+	}
+	for k, col := range b.Columns {
+		if i < len(col) {
+			dst[k] = col[i]
+		}
+	}
+}
+
 // ColumnNames returns all column names in the batch in deterministic order:
 // builtin fields in canonical order, then user-defined fields alphabetically.
 func (b *Batch) ColumnNames() []string {

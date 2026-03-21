@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/internal/buildinfo"
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/storage"
 	"github.com/lynxbase/lynxdb/pkg/storage/compaction"
@@ -177,6 +178,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCacheClear(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	s.engine.CacheClear()
 	respondData(w, http.StatusOK, map[string]interface{}{
 		"status": "cleared",

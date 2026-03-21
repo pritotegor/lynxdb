@@ -74,7 +74,10 @@ func (i *SavedQueryInput) ToSavedQuery() *SavedQuery {
 
 func generateID() string {
 	b := make([]byte, 8)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: use timestamp-based ID if crypto/rand fails.
+		b = []byte(fmt.Sprintf("%016x", time.Now().UnixNano()))
+	}
 
 	return "sq_" + hex.EncodeToString(b)
 }
@@ -82,9 +85,10 @@ func generateID() string {
 const storeFile = "saved-queries.json"
 
 type Store struct {
-	mu      sync.RWMutex
-	queries map[string]*SavedQuery
-	dir     string
+	mu        sync.RWMutex
+	persistMu sync.Mutex // serializes disk writes (separate from data lock)
+	queries   map[string]*SavedQuery
+	dir       string
 }
 
 func OpenStore(dir string) (*Store, error) {
@@ -142,44 +146,72 @@ func (s *Store) Get(id string) (*SavedQuery, error) {
 
 func (s *Store) Create(sq *SavedQuery) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, existing := range s.queries {
 		if existing.Name == sq.Name {
+			s.mu.Unlock()
+
 			return ErrAlreadyExists
 		}
 	}
 	cp := *sq
 	s.queries[sq.ID] = &cp
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return s.persistLocked()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.persist(data)
 }
 
 func (s *Store) Update(sq *SavedQuery) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if _, ok := s.queries[sq.ID]; !ok {
+		s.mu.Unlock()
+
 		return ErrNotFound
 	}
 	cp := *sq
 	s.queries[sq.ID] = &cp
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return s.persistLocked()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.persist(data)
 }
 
 func (s *Store) Delete(id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if _, ok := s.queries[id]; !ok {
+		s.mu.Unlock()
+
 		return ErrNotFound
 	}
 	delete(s.queries, id)
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return s.persistLocked()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.persist(data)
 }
 
-func (s *Store) persistLocked() error {
+// snapshotLocked marshals the current queries to JSON. Caller must hold s.mu.
+func (s *Store) snapshotLocked() ([]byte, error) {
 	if s.dir == "" {
-		return nil
+		return nil, nil
 	}
 	list := make([]*SavedQuery, 0, len(s.queries))
 	for _, q := range s.queries {
@@ -188,7 +220,16 @@ func (s *Store) persistLocked() error {
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
-		return fmt.Errorf("savedqueries: marshal: %w", err)
+		return nil, fmt.Errorf("savedqueries: marshal: %w", err)
+	}
+
+	return data, nil
+}
+
+// persist writes pre-marshaled data to disk atomically. Called WITHOUT the lock held.
+func (s *Store) persist(data []byte) error {
+	if data == nil {
+		return nil
 	}
 	path := filepath.Join(s.dir, storeFile)
 	tmp := path + ".tmp"

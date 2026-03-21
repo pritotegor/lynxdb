@@ -129,27 +129,32 @@ func TestTimestampValueNano(t *testing.T) {
 	}
 }
 
-func TestValuePanicsOnWrongType(t *testing.T) {
-	tests := []struct {
-		name string
-		fn   func()
-	}{
-		{"AsString on int", func() { IntValue(1).AsString() }},
-		{"AsInt on string", func() { StringValue("x").AsInt() }},
-		{"AsFloat on bool", func() { BoolValue(true).AsFloat() }},
-		{"AsBool on null", func() { NullValue().AsBool() }},
-		{"AsTimestamp on string", func() { StringValue("x").AsTimestamp() }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			defer func() {
-				if r := recover(); r == nil {
-					t.Fatal("expected panic")
-				}
-			}()
-			tt.fn()
-		})
-	}
+func TestValueReturnsZeroOnWrongType(t *testing.T) {
+	t.Run("AsString on int returns empty string", func(t *testing.T) {
+		if got := IntValue(1).AsString(); got != "" {
+			t.Fatalf("expected empty string, got %q", got)
+		}
+	})
+	t.Run("AsInt on string returns 0", func(t *testing.T) {
+		if got := StringValue("x").AsInt(); got != 0 {
+			t.Fatalf("expected 0, got %d", got)
+		}
+	})
+	t.Run("AsFloat on bool returns 0", func(t *testing.T) {
+		if got := BoolValue(true).AsFloat(); got != 0 {
+			t.Fatalf("expected 0, got %f", got)
+		}
+	})
+	t.Run("AsBool on null returns false", func(t *testing.T) {
+		if got := NullValue().AsBool(); got {
+			t.Fatal("expected false")
+		}
+	})
+	t.Run("AsTimestamp on string returns zero time", func(t *testing.T) {
+		if got := StringValue("x").AsTimestamp(); !got.IsZero() {
+			t.Fatalf("expected zero time, got %v", got)
+		}
+	})
 }
 
 func TestFieldTypeString(t *testing.T) {

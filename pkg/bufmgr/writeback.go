@@ -131,9 +131,15 @@ func (ws *writebackScheduler) flushDirtyFrames() {
 			ws.logger.Warn("bufmgr: writeback failed",
 				"frame_id", f.ID, "owner", f.Owner.String(), "error", err)
 			// Transition back to dirty on failure.
-			_ = f.TransitionTo(StateDirty)
+			if transErr := f.TransitionTo(StateDirty); transErr != nil {
+				ws.logger.Error("bufmgr: failed to transition frame to dirty after writeback error",
+					"frame_id", f.ID, "transition_error", transErr)
+			}
 		} else {
-			_ = f.TransitionTo(StateClean)
+			if transErr := f.TransitionTo(StateClean); transErr != nil {
+				ws.logger.Error("bufmgr: failed to transition frame to clean after successful writeback",
+					"frame_id", f.ID, "transition_error", transErr)
+			}
 			ws.writtenCount.Add(1)
 		}
 		f.Unpin()

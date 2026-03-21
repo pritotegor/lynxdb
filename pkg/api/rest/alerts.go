@@ -6,9 +6,13 @@ import (
 	"net/http"
 
 	"github.com/lynxbase/lynxdb/pkg/alerts"
+	"github.com/lynxbase/lynxdb/pkg/auth"
 )
 
 func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	var input alerts.AlertInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")
@@ -52,6 +56,9 @@ func (s *Server) handleGetAlert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateAlert(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	id := r.PathValue("id")
 
 	var input alerts.AlertInput
@@ -81,6 +88,9 @@ func (s *Server) handleUpdateAlert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteAlert(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	id := r.PathValue("id")
 	if err := s.alertMgr.Delete(id); err != nil {
 		respondError(w, ErrCodeNotFound, http.StatusNotFound, err.Error())
@@ -91,6 +101,9 @@ func (s *Server) handleDeleteAlert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTestAlert(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	id := r.PathValue("id")
 	result, err := s.alertMgr.TestAlert(r.Context(), id)
 	if err != nil {
@@ -106,6 +119,9 @@ func (s *Server) handleTestAlert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTestAlertChannels(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	id := r.PathValue("id")
 	results, err := s.alertMgr.TestChannels(r.Context(), id)
 	if err != nil {

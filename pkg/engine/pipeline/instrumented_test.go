@@ -167,50 +167,6 @@ func TestWrapInstrumented_UpdatesEmptyName(t *testing.T) {
 	}
 }
 
-func TestInstrumentedFilterIterator_RowCounts(t *testing.T) {
-	t.Parallel()
-
-	// Simulate: child produces 100 rows (10 batches × 10 rows).
-	// Filter keeps every 5th row → indices 4, 9 per batch = 2 per batch = 20 total.
-	mock := &mockIterator{batches: 10, batchLen: 10}
-	childII := WrapInstrumented(mock, "Scan")
-
-	filterMock := &filteringIterator{child: childII, keepEvery: 5}
-	fi := WrapInstrumentedFilter(filterMock, "Filter", childII)
-
-	ctx := context.Background()
-	_ = fi.Init(ctx)
-
-	var totalOut int64
-	for {
-		batch, err := fi.Next(ctx)
-		if err != nil {
-			t.Fatalf("Next: %v", err)
-		}
-		if batch == nil {
-			break
-		}
-		totalOut += int64(batch.Len)
-	}
-	_ = fi.Close()
-
-	st := fi.StageStats()
-	if st.Name != "Filter" {
-		t.Errorf("Name = %q, want %q", st.Name, "Filter")
-	}
-	// InputRows = child's output = 100 rows.
-	if st.InputRows != 100 {
-		t.Errorf("InputRows = %d, want 100", st.InputRows)
-	}
-	// OutputRows = what the filter emitted = 20 (2 per batch × 10 batches).
-	if st.OutputRows != 20 {
-		t.Errorf("OutputRows = %d, want 20", st.OutputRows)
-	}
-	if totalOut != 20 {
-		t.Errorf("totalOut = %d, want 20", totalOut)
-	}
-}
-
 func TestCollectStageStats_InstrumentedChain(t *testing.T) {
 	t.Parallel()
 
@@ -457,36 +413,3 @@ func TestCollectWarnings_NoWarnings(t *testing.T) {
 		t.Fatalf("expected no warnings, got %v", warnings)
 	}
 }
-
-// filteringIterator keeps every Nth row for testing.
-type filteringIterator struct {
-	child     Iterator
-	keepEvery int
-}
-
-func (f *filteringIterator) Init(ctx context.Context) error {
-	return f.child.Init(ctx)
-}
-
-func (f *filteringIterator) Next(ctx context.Context) (*Batch, error) {
-	for {
-		batch, err := f.child.Next(ctx)
-		if batch == nil || err != nil {
-			return nil, err
-		}
-
-		result := NewBatch(batch.Len / f.keepEvery)
-		for i := 0; i < batch.Len; i++ {
-			if (i+1)%f.keepEvery == 0 {
-				result.AddRow(batch.Row(i))
-			}
-		}
-
-		if result.Len > 0 {
-			return result, nil
-		}
-	}
-}
-
-func (f *filteringIterator) Close() error        { return f.child.Close() }
-func (f *filteringIterator) Schema() []FieldInfo { return f.child.Schema() }

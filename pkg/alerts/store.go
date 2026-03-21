@@ -14,9 +14,10 @@ const alertsFile = "alerts.json"
 
 // AlertStore manages alert definitions with optional persistent storage.
 type AlertStore struct {
-	mu     sync.RWMutex
-	alerts map[string]*Alert // keyed by ID
-	dir    string            // empty = in-memory only
+	mu        sync.RWMutex
+	persistMu sync.Mutex        // serializes disk writes (separate from data lock)
+	alerts    map[string]*Alert // keyed by ID
+	dir       string            // empty = in-memory only
 }
 
 // OpenStore loads or creates an alert store in the given directory.
@@ -89,56 +90,84 @@ func (s *AlertStore) Get(id string) (*Alert, error) {
 // Create adds a new alert. Returns ErrAlertAlreadyExists if the name is taken.
 func (s *AlertStore) Create(alert *Alert) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	for _, existing := range s.alerts {
 		if existing.Name == alert.Name {
+			s.mu.Unlock()
+
 			return ErrAlertAlreadyExists
 		}
 	}
 
 	cp := *alert
 	s.alerts[alert.ID] = &cp
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return s.persistLocked()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.persist(data)
 }
 
 // Update fully replaces an alert by ID.
 func (s *AlertStore) Update(alert *Alert) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if _, ok := s.alerts[alert.ID]; !ok {
+		s.mu.Unlock()
+
 		return ErrAlertNotFound
 	}
 
 	cp := *alert
 	s.alerts[alert.ID] = &cp
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return s.persistLocked()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.persist(data)
 }
 
 // Delete removes an alert by ID.
 func (s *AlertStore) Delete(id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if _, ok := s.alerts[id]; !ok {
+		s.mu.Unlock()
+
 		return ErrAlertNotFound
 	}
 
 	delete(s.alerts, id)
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return s.persistLocked()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.persist(data)
 }
 
 // UpdateStatus updates only the status fields of an alert.
 func (s *AlertStore) UpdateStatus(id string, status AlertStatus, lastChecked time.Time, lastTriggered *time.Time) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	a, ok := s.alerts[id]
 	if !ok {
+		s.mu.Unlock()
+
 		return ErrAlertNotFound
 	}
 
@@ -147,14 +176,22 @@ func (s *AlertStore) UpdateStatus(id string, status AlertStatus, lastChecked tim
 	if lastTriggered != nil {
 		a.LastTriggered = lastTriggered
 	}
+	data, err := s.snapshotLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 
-	return s.persistLocked()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.persist(data)
 }
 
-// persistLocked writes alerts to disk atomically. Caller must hold s.mu.
-func (s *AlertStore) persistLocked() error {
+// snapshotLocked marshals the current alerts to JSON. Caller must hold s.mu.
+func (s *AlertStore) snapshotLocked() ([]byte, error) {
 	if s.dir == "" {
-		return nil // in-memory mode
+		return nil, nil // in-memory mode
 	}
 
 	list := make([]*Alert, 0, len(s.alerts))
@@ -167,7 +204,16 @@ func (s *AlertStore) persistLocked() error {
 
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
-		return fmt.Errorf("alerts: marshal: %w", err)
+		return nil, fmt.Errorf("alerts: marshal: %w", err)
+	}
+
+	return data, nil
+}
+
+// persist writes pre-marshaled data to disk atomically. Called WITHOUT the lock held.
+func (s *AlertStore) persist(data []byte) error {
+	if data == nil {
+		return nil // in-memory mode
 	}
 
 	path := filepath.Join(s.dir, alertsFile)

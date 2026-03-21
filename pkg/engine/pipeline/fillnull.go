@@ -69,8 +69,7 @@ func (f *FillnullIterator) Next(ctx context.Context) (*Batch, error) {
 		}
 	} else {
 		// Fill all columns.
-		for field, col := range batch.Columns {
-			_ = field
+		for _, col := range batch.Columns {
 			for i := 0; i < batch.Len; i++ {
 				if col[i].IsNull() {
 					col[i] = fillVal

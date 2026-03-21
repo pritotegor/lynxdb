@@ -6,12 +6,17 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
 func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery) {
+		return
+	}
+
 	var req QueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")

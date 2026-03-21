@@ -1033,7 +1033,9 @@ func (t *TailIterator) Next(ctx context.Context) (*Batch, error) {
 					// Track memory: only Grow for new slots (first fill of ring).
 					// Replacements are memory-neutral (one row in, one row out).
 					if t.totalSeen < t.count {
-						_ = t.acct.Grow(estimatedRowBytes)
+						if err := t.acct.Grow(estimatedRowBytes); err != nil {
+							return nil, fmt.Errorf("tail: memory budget exceeded: %w", err)
+						}
 					}
 					t.ring[t.totalSeen%t.count] = batch.Row(i)
 					t.totalSeen++

@@ -31,6 +31,9 @@ func (s *Server) handleListFields(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRoot(w, r) {
+		return
+	}
 	var req struct {
 		Name              string `json:"name"`
 		RetentionDays     int    `json:"retention_days,omitempty"`

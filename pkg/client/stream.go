@@ -17,7 +17,11 @@ const ndjsonScanBufSize = 1 << 20 // 1MB
 // QueryStream executes a streaming query via POST /query/stream.
 // Each NDJSON line is delivered to fn. Returns the final stream metadata.
 func (c *Client) QueryStream(ctx context.Context, req QueryRequest, fn func(json.RawMessage) error) (*StreamMeta, error) {
-	resp, err := c.doRaw(ctx, http.MethodPost, "/query/stream", marshalReader(c, req), "application/json")
+	body, err := marshalReader(c, req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRaw(ctx, http.MethodPost, "/query/stream", body, "application/json")
 	if err != nil {
 		return nil, err
 	}
@@ -211,9 +215,12 @@ func readSSE(r io.Reader, fn func(SSEEvent) error) error {
 }
 
 // marshalReader encodes v as JSON into a buffer from the pool and returns a reader.
-func marshalReader(c *Client, v interface{}) io.Reader {
+// Returns an error if JSON encoding fails.
+func marshalReader(c *Client, v interface{}) (io.Reader, error) {
 	buf := c.getBuf()
-	_ = json.NewEncoder(buf).Encode(v)
+	if err := json.NewEncoder(buf).Encode(v); err != nil {
+		return nil, fmt.Errorf("marshalReader: %w", err)
+	}
 
-	return buf
+	return buf, nil
 }

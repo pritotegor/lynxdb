@@ -114,11 +114,6 @@ func (r *Results) View() string {
 	return r.viewport.View()
 }
 
-// ScrollToBottom positions the viewport at the end.
-func (r *Results) ScrollToBottom() {
-	r.viewport.GotoBottom()
-}
-
 func (r *Results) updateContent() {
 	content := strings.Join(r.entries, "\n")
 	r.viewport.SetContent(content)

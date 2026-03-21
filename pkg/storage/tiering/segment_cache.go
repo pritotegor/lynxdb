@@ -102,7 +102,9 @@ func NewSegmentCacheWithConfig(dir string, cfg SegmentCacheConfig) *SegmentCache
 		maxDiskBytes: cfg.MaxDiskBytes,
 	}
 	if dir != "" {
-		_ = os.MkdirAll(dir, 0o755)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			slog.Warn("segment_cache: failed to create cache directory", "dir", dir, "error", err)
+		}
 	}
 
 	return sc
@@ -201,7 +203,11 @@ func (sc *SegmentCache) PutChunk(segmentID string, rgIndex int, column string, d
 
 	dir := filepath.Dir(path)
 	if _, ok := knownDirs.Load(dir); !ok {
-		_ = os.MkdirAll(dir, 0o755)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			slog.Warn("segment_cache: failed to create chunk directory", "dir", dir, "error", err)
+
+			return
+		}
 		// Bound the map: if we've accumulated too many entries, clear and start fresh.
 		if atomic.AddInt64(&knownDirsCount, 1) > knownDirsMaxEntries {
 			knownDirs.Range(func(k, _ any) bool {

@@ -281,11 +281,17 @@ func (p *raftMetaStateProvider) PromoteISRReplica(ctx context.Context, deadNode 
 
 		// First, force transition to draining (bypassing the active check
 		// since the primary is dead).
-		drainPayload, _ := meta.MarshalPayload(meta.ProposeDrainPayload{
+		drainPayload, err := meta.MarshalPayload(meta.ProposeDrainPayload{
 			ShardID: shardKey,
 			NodeID:  a.Primary,
 		})
-		drainCmd, _ := meta.EncodeCommand(&meta.Command{Type: meta.CmdProposeDrain, Data: drainPayload})
+		if err != nil {
+			continue // Best effort — shard may already be in a different state.
+		}
+		drainCmd, err := meta.EncodeCommand(&meta.Command{Type: meta.CmdProposeDrain, Data: drainPayload})
+		if err != nil {
+			continue // Best effort — shard may already be in a different state.
+		}
 		if f := p.raft.Apply(drainCmd, 5*time.Second); f.Error() != nil {
 			continue // Best effort — shard may already be in a different state.
 		}

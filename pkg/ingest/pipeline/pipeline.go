@@ -172,7 +172,7 @@ func tryParseTime(raw, format string) (time.Time, error) {
 	raw = strings.TrimLeft(raw, "\" ")
 	fmtLen := len(format)
 	if len(raw) < fmtLen {
-		return time.Time{}, fmt.Errorf("too short")
+		return time.Time{}, fmt.Errorf("tryParseTime: input too short for format %q (len=%d < %d)", format, len(raw), fmtLen)
 	}
 	// Try at position 0 first (fast path).
 	if t, ok := tryParseAt(raw, 0, format, fmtLen); ok {
@@ -191,7 +191,7 @@ func tryParseTime(raw, format string) (time.Time, error) {
 		}
 	}
 
-	return time.Time{}, fmt.Errorf("no match")
+	return time.Time{}, fmt.Errorf("tryParseTime: no match for format %q in first %d chars", format, limit)
 }
 
 func tryParseAt(raw string, start int, format string, fmtLen int) (time.Time, bool) {
@@ -325,7 +325,18 @@ func (p *MetadataOnlyParser) Process(events []*event.Event) ([]*event.Event, err
 			}
 			strVal, ok := v.(string)
 			if !ok {
-				continue
+				// Handle non-string metadata values (e.g., numeric timestamps).
+				// Convert to string representation for lightweight processing.
+				switch nv := v.(type) {
+				case float64:
+					strVal = fmt.Sprintf("%g", nv)
+					ok = true
+				case bool:
+					strVal = fmt.Sprintf("%t", nv)
+					ok = true
+				default:
+					continue
+				}
 			}
 			switch k {
 			case "host":

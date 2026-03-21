@@ -371,7 +371,13 @@ func (h HECEvent) ToEvent() *event.Event {
 		case string:
 			e.SetField(k, event.StringValue(val))
 		case float64:
-			e.SetField(k, event.IntValue(int64(val)))
+			if val == float64(int64(val)) {
+				e.SetField(k, event.IntValue(int64(val)))
+			} else {
+				e.SetField(k, event.FloatValue(val))
+			}
+		case bool:
+			e.SetField(k, event.BoolValue(val))
 		}
 	}
 

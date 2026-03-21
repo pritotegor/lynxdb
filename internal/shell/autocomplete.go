@@ -149,59 +149,6 @@ func (c *Completer) Suggest(value string) []string {
 	return c.buildFullLine(value, replaceStart, candidates, "")
 }
 
-// suggest returns bare candidate words for the current input (internal use).
-func (c *Completer) suggest(value string) []string {
-	if value == "" {
-		return nil
-	}
-
-	if strings.HasPrefix(value, "/") {
-		return c.matchPrefix(value, c.slashCmds)
-	}
-
-	word := lastWord(value)
-	if word == "" {
-		return nil
-	}
-
-	lowerWord := strings.ToLower(word)
-	before := strings.TrimSpace(value[:len(value)-len(word)])
-	beforeLower := strings.ToLower(before)
-
-	if before == "" || strings.HasSuffix(beforeLower, "|") || strings.HasSuffix(beforeLower, "| ") {
-		return c.matchPrefixCI(word, c.commands)
-	}
-
-	lastCmd := lastCommandWord(beforeLower)
-	if lastCmd == "stats" || lastCmd == "timechart" || lastCmd == "eventstats" || lastCmd == "streamstats" {
-		results := c.matchPrefixCI(word, c.aggFuncs)
-		results = append(results, c.matchPrefixCI(word, c.fields)...)
-
-		return results
-	}
-
-	if lastCmd == "by" || lastCmd == "where" || lastCmd == "eval" {
-		return c.matchPrefixCI(word, c.fields)
-	}
-
-	if fieldName, partial, _, ok := detectFieldValuePattern(value); ok {
-		if values, found := c.fieldValues[fieldName]; found {
-			return c.matchValuePrefix(partial, values)
-		}
-	}
-
-	var all []string
-	for _, list := range [][]string{c.commands, c.aggFuncs, c.evalFuncs, c.fields} {
-		for _, s := range list {
-			if strings.HasPrefix(strings.ToLower(s), lowerWord) && strings.ToLower(s) != lowerWord {
-				all = append(all, s)
-			}
-		}
-	}
-
-	return all
-}
-
 // buildFullLine constructs full-line suggestions by replacing value[replaceStart:]
 // with each candidate, appending suffix (e.g. closing quote) to each.
 func (c *Completer) buildFullLine(value string, replaceStart int, candidates []string, suffix string) []string {

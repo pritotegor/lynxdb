@@ -7,11 +7,15 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/server"
 )
 
 // handleGetJob returns the status/results of a job by string ID.
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery) {
+		return
+	}
 	jobID, ok := requirePathValue(r, w, "id")
 	if !ok {
 		return
@@ -83,6 +87,9 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 
 // handleCancelJob cancels a running job.
 func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
 	jobID, ok := requirePathValue(r, w, "id")
 	if !ok {
 		return
@@ -100,6 +107,9 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 
 // handleListJobs returns all active/recent jobs.
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery) {
+		return
+	}
 	jobs := s.engine.ListJobs()
 	entries := make([]map[string]interface{}, len(jobs))
 	for i, j := range jobs {
@@ -113,6 +123,9 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 
 // handleJobStream sends SSE events for job progress and results.
 func (s *Server) handleJobStream(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery) {
+		return
+	}
 	jobID, ok := requirePathValue(r, w, "id")
 	if !ok {
 		return
