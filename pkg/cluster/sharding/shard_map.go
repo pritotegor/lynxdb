@@ -54,6 +54,15 @@ type ShardAssignment struct {
 type ShardMap struct {
 	Assignments map[string]*ShardAssignment `json:"assignments" msgpack:"assignments"`
 	Epoch       uint64                      `json:"epoch" msgpack:"epoch"`
+
+	// NodeAddrs maps node IDs to their gRPC addresses.
+	// Populated by the meta service in WatchShardMap so non-meta nodes can
+	// resolve peer addresses for routing and query fan-out.
+	NodeAddrs map[NodeID]string `json:"node_addrs,omitempty" msgpack:"node_addrs"`
+
+	// NodeRoles maps node IDs to their role lists (e.g., ["ingest"], ["query"]).
+	// Used by ingest nodes to discover query nodes for part-committed notifications.
+	NodeRoles map[NodeID][]string `json:"node_roles,omitempty" msgpack:"node_roles"`
 }
 
 // NewShardMap creates an empty shard map.

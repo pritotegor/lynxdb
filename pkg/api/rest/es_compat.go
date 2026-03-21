@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -540,6 +541,7 @@ func (s *Server) handleESClusterInfo(w http.ResponseWriter, r *http.Request) {
 // calls during startup (ILM policies, index templates, ingest pipelines, etc.).
 // Returns 200 with an empty JSON object so Filebeat doesn't fail with 404.
 func (s *Server) handleESStub(w http.ResponseWriter, r *http.Request) {
+	slog.Debug("es compat stub hit", "method", r.Method, "path", r.URL.Path)
 	setESHeaders(w)
 	respondJSON(w, http.StatusOK, map[string]interface{}{})
 }

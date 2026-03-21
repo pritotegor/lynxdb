@@ -78,3 +78,17 @@ func (c *ShardMapCache) GetSplitRegistry() *sharding.SplitRegistry {
 func (c *ShardMapCache) UpdateSplitRegistry(sr *sharding.SplitRegistry) {
 	c.splits.Store(sr)
 }
+
+// GetNodeAddrs returns the cached node ID to gRPC address map.
+// The addresses are embedded in the ShardMap by the meta service's
+// WatchShardMap, so they stay in sync with shard assignments automatically.
+// Returns nil if no node addresses have been received yet.
+// Safe for concurrent use.
+func (c *ShardMapCache) GetNodeAddrs() map[sharding.NodeID]string {
+	sm := c.current.Load()
+	if sm == nil {
+		return nil
+	}
+
+	return sm.NodeAddrs
+}

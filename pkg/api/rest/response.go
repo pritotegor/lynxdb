@@ -33,6 +33,7 @@ const (
 	ErrCodeQueryMemoryExceeded ErrorCode = "QUERY_MEMORY_EXCEEDED"
 	ErrCodeQueryPoolExhausted  ErrorCode = "QUERY_POOL_EXHAUSTED"
 	ErrCodeQueryTooLarge       ErrorCode = "QUERY_TOO_LARGE"
+	ErrCodeUnsupportedCommand  ErrorCode = "UNSUPPORTED_COMMAND"
 )
 
 // errorBody is the structured error envelope.

@@ -182,7 +182,9 @@ func NewManager(cfg ManagerConfig) (Manager, error) {
 	for i := 0; i < maxFrames; i++ {
 		f, err := m.newFrame(FrameID(i+1), i)
 		if err != nil {
-			_ = m.closeFrames()
+			if closeErr := m.closeFrames(); closeErr != nil {
+				logger.Warn("failed to close frames during cleanup", "error", closeErr)
+			}
 
 			return nil, fmt.Errorf("bufmgr.NewManager: pre-allocate frame %d/%d: %w", i, maxFrames, err)
 		}

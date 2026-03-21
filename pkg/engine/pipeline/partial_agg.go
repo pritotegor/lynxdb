@@ -20,9 +20,10 @@ type PartialAggSpec struct {
 
 // PartialAggFunc describes a single aggregation function for partial aggregation.
 type PartialAggFunc struct {
-	Name  string `json:"name"`  // "count", "sum", "avg", "min", "max"
-	Field string `json:"field"` // field to aggregate (empty for count)
-	Alias string `json:"alias"` // output name
+	Name   string `json:"name"`             // "count", "sum", "avg", "min", "max"
+	Field  string `json:"field"`            // field to aggregate (empty for count)
+	Alias  string `json:"alias"`            // output name
+	Hidden bool   `json:"hidden,omitempty"` // if true, omitted from finalized output (e.g., auto-injected count for avg)
 }
 
 // PartialAggGroup holds partial aggregation results for one group.
@@ -250,6 +251,9 @@ func MergePartialAggs(partials [][]*PartialAggGroup, spec *PartialAggSpec) []map
 				}
 			}
 			for j, fn := range spec.Funcs {
+				if fn.Hidden {
+					continue
+				}
 				row[fn.Alias] = finalizePartialState(&group.States[j], fn.Name)
 			}
 			rows = append(rows, row)
@@ -260,6 +264,9 @@ func MergePartialAggs(partials [][]*PartialAggGroup, spec *PartialAggSpec) []map
 	if len(rows) == 0 && len(spec.GroupBy) == 0 {
 		row := make(map[string]event.Value, len(spec.Funcs))
 		for _, fn := range spec.Funcs {
+			if fn.Hidden {
+				continue
+			}
 			row[fn.Alias] = finalizePartialState(&PartialAggState{
 				Min: event.NullValue(),
 				Max: event.NullValue(),

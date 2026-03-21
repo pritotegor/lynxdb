@@ -51,11 +51,12 @@ type EngineConfig struct {
 // single-threaded CLI file/stdin queries only. The events map has
 // no synchronization — do not use concurrently.
 type Engine struct {
-	profile  Profile
-	features ProfileFeatures
-	events   map[string][]*event.Event
-	pipe     *ingestpipeline.Pipeline
-	closed   bool
+	profile       Profile
+	features      ProfileFeatures
+	events        map[string][]*event.Event
+	pipe          *ingestpipeline.Pipeline
+	closed        bool
+	totalRawBytes int64 // cumulative raw bytes ingested (sum of line lengths)
 }
 
 // NewEngine creates a StorageEngine configured by the given config.
@@ -90,9 +91,10 @@ func (e *Engine) Profile() Profile {
 
 // IngestOpts controls how raw data is parsed during ingestion.
 type IngestOpts struct {
-	Source     string
-	SourceType string
-	Index      string
+	Source      string
+	SourceType  string
+	Index       string
+	MaxFileSize int64 // Maximum allowed file size in bytes. 0 = unlimited.
 }
 
 // QueryOpts controls query execution.
@@ -112,22 +114,32 @@ type QueryResult struct {
 }
 
 // IngestFile reads a file and ingests all lines as events.
-func (e *Engine) IngestFile(path string, opts IngestOpts) (int, error) {
+func (e *Engine) IngestFile(ctx context.Context, path string, opts IngestOpts) (int, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer f.Close()
 
+	if opts.MaxFileSize > 0 {
+		fi, err := f.Stat()
+		if err != nil {
+			return 0, fmt.Errorf("stat %s: %w", path, err)
+		}
+		if fi.Size() > opts.MaxFileSize {
+			return 0, fmt.Errorf("file %s exceeds max size: %d > %d bytes", path, fi.Size(), opts.MaxFileSize)
+		}
+	}
+
 	if opts.Source == "" {
 		opts.Source = path
 	}
 
-	return e.IngestReader(f, opts)
+	return e.IngestReader(ctx, f, opts)
 }
 
 // IngestReader reads from r and ingests all lines as events.
-func (e *Engine) IngestReader(r io.Reader, opts IngestOpts) (int, error) {
+func (e *Engine) IngestReader(ctx context.Context, r io.Reader, opts IngestOpts) (int, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
@@ -146,12 +158,16 @@ func (e *Engine) IngestReader(r io.Reader, opts IngestOpts) (int, error) {
 			continue
 		}
 
+		e.totalRawBytes += int64(len(line))
 		ev := event.NewEvent(time.Time{}, line)
 		ev.Source = opts.Source
 		ev.SourceType = opts.SourceType
 		batch = append(batch, ev)
 
 		if len(batch) >= batchSize {
+			if err := ctx.Err(); err != nil {
+				return total, err
+			}
 			n, err := e.processBatch(batch, idx)
 			if err != nil {
 				return total, err
@@ -209,7 +225,7 @@ func (e *Engine) processBatchWith(pipe *ingestpipeline.Pipeline, events []*event
 }
 
 // IngestLines ingests pre-split lines as events.
-func (e *Engine) IngestLines(lines []string, opts IngestOpts) (int, error) {
+func (e *Engine) IngestLines(ctx context.Context, lines []string, opts IngestOpts) (int, error) {
 	idx := defaultIndex
 	if opts.Index != "" {
 		idx = opts.Index
@@ -338,10 +354,8 @@ func (e *Engine) Query(ctx context.Context, spl2Query string, opts QueryOpts) (*
 	}
 
 	st.ScannedRows = totalEvents
-	// Estimate processed bytes for ephemeral queries (no segment metadata available).
-	// Use approximate average event size based on typical log lines (~200 bytes/event).
-	const ephemeralAvgEventBytes int64 = 200
-	st.ProcessedBytes = totalEvents * ephemeralAvgEventBytes
+	// Use actual bytes tracked during ingestion instead of a fixed estimate.
+	st.ProcessedBytes = e.totalRawBytes
 	st.ResultRows = int64(len(pipeRows))
 
 	rows := make([]map[string]interface{}, len(pipeRows))

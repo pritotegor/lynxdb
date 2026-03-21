@@ -161,7 +161,19 @@ func (s *Service) WatchShardMap(req *clusterpb.WatchShardMapRequest, stream clus
 				continue
 			}
 
-			smData, err := msgpack.Marshal(state.ShardMap)
+			// Shallow copy the shard map and populate node addresses/roles
+			// so non-meta nodes can resolve peer addresses.
+			smCopy := *state.ShardMap
+			smCopy.NodeAddrs = make(map[sharding.NodeID]string, len(state.Nodes))
+			smCopy.NodeRoles = make(map[sharding.NodeID][]string, len(state.Nodes))
+			for id, entry := range state.Nodes {
+				if entry.State != NodeDead && entry.Info.GRPCAddr != "" {
+					smCopy.NodeAddrs[id] = entry.Info.GRPCAddr
+					smCopy.NodeRoles[id] = entry.Info.Roles
+				}
+			}
+
+			smData, err := msgpack.Marshal(&smCopy)
 			if err != nil {
 				s.logger.Error("WatchShardMap: marshal shard map failed", "error", err)
 

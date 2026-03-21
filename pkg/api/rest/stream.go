@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
@@ -25,6 +26,13 @@ func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
 	}
 	query = substituteVariables(query, req.Variables)
 	if !s.checkQueryLength(w, query) {
+		return
+	}
+
+	if ucErr := spl2.CheckUnsupportedCommands(query); ucErr != nil {
+		respondError(w, ErrCodeUnsupportedCommand, http.StatusBadRequest,
+			ucErr.Error(), WithSuggestion(ucErr.Hint))
+
 		return
 	}
 

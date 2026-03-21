@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	crypto_rand "crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"log/slog"
 	"os"
@@ -323,7 +324,10 @@ type SearchJob struct {
 
 func newSearchJob(query string, rt ResultType) *SearchJob {
 	b := make([]byte, 8)
-	_, _ = crypto_rand.Read(b)
+	if _, err := crypto_rand.Read(b); err != nil {
+		// Fallback: use timestamp-based ID if crypto/rand fails.
+		binary.BigEndian.PutUint64(b, uint64(time.Now().UnixNano()))
+	}
 
 	return &SearchJob{
 		ID:         "qry_" + hex.EncodeToString(b),

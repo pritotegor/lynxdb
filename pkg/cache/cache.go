@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"hash/fnv"
 	"log/slog"
 	"os"
@@ -139,6 +140,7 @@ type Store struct {
 	// Observability counters for cache pressure and disk errors.
 	poolFullDrops atomic.Int64 // inserts dropped because governor pool was full
 	removeErrors  atomic.Int64 // os.Remove failures during eviction
+	writeErrors   atomic.Int64 // os.WriteFile failures during disk persistence
 
 	diskOps chan diskOp    // async disk write/remove queue
 	diskWg  sync.WaitGroup // tracks background disk goroutine
@@ -427,8 +429,12 @@ func (cs *Store) Clear() error {
 	cs.mu.Unlock()
 
 	if cs.dir != "" {
-		_ = os.RemoveAll(cs.dir)
-		_ = os.MkdirAll(cs.dir, 0o755)
+		if err := os.RemoveAll(cs.dir); err != nil {
+			return fmt.Errorf("cache: clear: remove: %w", err)
+		}
+		if err := os.MkdirAll(cs.dir, 0o755); err != nil {
+			return fmt.Errorf("cache: clear: mkdir: %w", err)
+		}
 	}
 
 	return nil
@@ -523,7 +529,9 @@ func (cs *Store) diskWorker() {
 			if err != nil {
 				continue
 			}
-			_ = os.WriteFile(path, data, 0o600)
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				cs.writeErrors.Add(1)
+			}
 		}
 	}
 }

@@ -310,6 +310,92 @@ func TestAnalyzeQuery_MultipleAggFunctions(t *testing.T) {
 	}
 }
 
+func TestAnalyzeQuery_AvgAutoInjectsHiddenCount(t *testing.T) {
+	// When avg is present without count, a hidden count function should be
+	// auto-injected so that backfill avg merge uses correct weighted averages.
+	analysis, err := AnalyzeQuery(`FROM main | stats avg(duration) by host`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if analysis.AggSpec == nil {
+		t.Fatal("expected non-nil AggSpec")
+	}
+
+	// Should have 2 funcs: avg(duration) + auto-injected hidden count.
+	if len(analysis.AggSpec.Funcs) != 2 {
+		t.Fatalf("Funcs: got %d, want 2 (avg + auto-injected count)", len(analysis.AggSpec.Funcs))
+	}
+
+	// First func: avg(duration).
+	if analysis.AggSpec.Funcs[0].Name != "avg" {
+		t.Errorf("Func[0].Name: got %q, want %q", analysis.AggSpec.Funcs[0].Name, "avg")
+	}
+	if analysis.AggSpec.Funcs[0].Hidden {
+		t.Error("Func[0].Hidden: avg should not be hidden")
+	}
+
+	// Second func: auto-injected hidden count.
+	if analysis.AggSpec.Funcs[1].Name != "count" {
+		t.Errorf("Func[1].Name: got %q, want %q", analysis.AggSpec.Funcs[1].Name, "count")
+	}
+	if analysis.AggSpec.Funcs[1].Alias != MVAutoCountAlias {
+		t.Errorf("Func[1].Alias: got %q, want %q", analysis.AggSpec.Funcs[1].Alias, MVAutoCountAlias)
+	}
+	if !analysis.AggSpec.Funcs[1].Hidden {
+		t.Error("Func[1].Hidden: auto-injected count should be hidden")
+	}
+}
+
+func TestAnalyzeQuery_AvgWithExplicitCountNoAutoInject(t *testing.T) {
+	// When both avg and count are present, no auto-injection should occur.
+	analysis, err := AnalyzeQuery(`FROM main | stats count, avg(duration) by host`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if analysis.AggSpec == nil {
+		t.Fatal("expected non-nil AggSpec")
+	}
+
+	// Should have exactly 2 funcs: count + avg. No auto-injection.
+	if len(analysis.AggSpec.Funcs) != 2 {
+		t.Fatalf("Funcs: got %d, want 2 (no auto-injection when count present)", len(analysis.AggSpec.Funcs))
+	}
+	for _, fn := range analysis.AggSpec.Funcs {
+		if fn.Hidden {
+			t.Errorf("no func should be hidden when user provides count, got hidden %q", fn.Alias)
+		}
+	}
+}
+
+func TestAnalyzeQuery_MultipleAvgAutoInjectsOneCount(t *testing.T) {
+	// Multiple avg functions should produce only one auto-injected count.
+	analysis, err := AnalyzeQuery(`FROM main | stats avg(duration), avg(bytes) by host`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if analysis.AggSpec == nil {
+		t.Fatal("expected non-nil AggSpec")
+	}
+
+	// Should have 3 funcs: avg(duration) + avg(bytes) + one auto-injected count.
+	if len(analysis.AggSpec.Funcs) != 3 {
+		t.Fatalf("Funcs: got %d, want 3 (2 avg + 1 auto-injected count)", len(analysis.AggSpec.Funcs))
+	}
+
+	hiddenCount := 0
+	for _, fn := range analysis.AggSpec.Funcs {
+		if fn.Hidden {
+			hiddenCount++
+		}
+	}
+	if hiddenCount != 1 {
+		t.Errorf("expected exactly 1 hidden func, got %d", hiddenCount)
+	}
+}
+
 func TestAnalyzeQuery_RejectGlobSource(t *testing.T) {
 	_, err := AnalyzeQuery(`FROM idx_* | stats count`)
 	if err == nil {

@@ -476,6 +476,14 @@ func (m Model) executeFileQueryCmd(query string) tea.Cmd {
 
 		normalizedQuery := spl2.NormalizeQuery(query)
 
+		if ucErr := spl2.CheckUnsupportedCommands(normalizedQuery); ucErr != nil {
+			return queryResultMsg{
+				query:   query,
+				elapsed: time.Since(start),
+				err:     ucErr,
+			}
+		}
+
 		var hintText string
 		if hints := spl2.DetectCompatHints(normalizedQuery); len(hints) > 0 {
 			hintText = spl2.FormatCompatHints(hints)
@@ -512,6 +520,14 @@ func (m Model) executeServerQueryCmd(query string) tea.Cmd {
 	hintText := m.jobHints // pre-computed in querySubmitMsg handler
 
 	return func() tea.Msg {
+		if ucErr := spl2.CheckUnsupportedCommands(query); ucErr != nil {
+			return queryResultMsg{
+				query: query,
+				err:   ucErr,
+				hints: hintText,
+			}
+		}
+
 		var from, to string
 		if since != "" {
 			tr, err := timerange.FromSince(strings.TrimPrefix(since, "-"), time.Now())

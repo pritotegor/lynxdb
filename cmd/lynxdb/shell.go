@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -75,7 +76,7 @@ func runShellFile(file, since string) error {
 			return fmt.Errorf("open %s: %w", path, err)
 		}
 
-		n, err := eng.IngestReader(f, storage.IngestOpts{Source: path})
+		n, err := eng.IngestReader(context.Background(), f, storage.IngestOpts{Source: path})
 		f.Close()
 
 		if err != nil {

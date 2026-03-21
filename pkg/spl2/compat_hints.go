@@ -1,6 +1,9 @@
 package spl2
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // CompatHint describes a Splunk-to-LynxDB compatibility suggestion.
 type CompatHint struct {
@@ -25,6 +28,33 @@ var unsupportedCommands = map[string]string{
 	"format":       "format is not yet supported.",
 	// Note: "bucket" is NOT listed here — it is a valid Lynx Flow command (desugars to bin).
 	"sistats": "sistats is not yet supported. Use stats instead.",
+}
+
+// UnsupportedCommandError is returned when a query uses a Splunk command
+// that LynxDB does not yet support.
+type UnsupportedCommandError struct {
+	Command string // the unsupported command name
+	Hint    string // suggestion for an alternative
+}
+
+func (e *UnsupportedCommandError) Error() string {
+	return fmt.Sprintf("unsupported command: %s. %s", e.Command, e.Hint)
+}
+
+// CheckUnsupportedCommands returns an UnsupportedCommandError if the query
+// contains any unsupported Splunk commands, or nil if all commands are supported.
+func CheckUnsupportedCommands(query string) *UnsupportedCommandError {
+	lower := strings.ToLower(query)
+	for cmd, hint := range unsupportedCommands {
+		pattern := "| " + cmd
+		if strings.Contains(lower, pattern) || strings.Contains(lower, "|"+cmd) {
+			return &UnsupportedCommandError{
+				Command: cmd,
+				Hint:    hint,
+			}
+		}
+	}
+	return nil
 }
 
 // translationHints maps Splunk patterns to LynxDB suggestions.

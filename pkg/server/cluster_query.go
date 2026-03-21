@@ -27,10 +27,10 @@ func (e *Engine) InitClusterQuery(node *cluster.Node, clientPool *rpc.ClientPool
 
 	logger := e.logger.With("component", "cluster-query")
 
-	// Node address resolver (TODO: build from node registry / shard map).
+	// Node address resolver — reads from the shard map cache which is
+	// populated by WatchShardMap with node gRPC addresses.
 	nodeAddrs := func() map[sharding.NodeID]string {
-		// For now return empty — will be populated by shard map watcher.
-		return nil
+		return node.ShardMapCache().GetNodeAddrs()
 	}
 
 	// Create shard pruner.

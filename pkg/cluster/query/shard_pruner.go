@@ -161,17 +161,29 @@ func (p *ShardPruner) resolveIndexes(hints *spl2.QueryHints) []string {
 	}
 }
 
+// maxUnboundedBuckets is the safety limit for unbounded queries. When no time
+// constraints are specified, we scan at most this many buckets back in time
+// to avoid runaway shard enumeration.
+const maxUnboundedBuckets = 365
+
 // computeTimeBuckets generates all time bucket boundaries that overlap
-// with the given time bounds. If bounds is nil, returns a single bucket
-// for "now" (current time truncated to bucket size).
+// with the given time bounds. If bounds is nil, returns all buckets from
+// maxUnboundedBuckets back to now so that unbounded queries include
+// historical data.
 func computeTimeBuckets(bounds *spl2.TimeBounds, bucketSize time.Duration) []time.Time {
 	now := time.Now().UTC()
 
 	if bounds == nil {
-		// No time bounds — return current bucket only.
-		// In a real production system, we'd want to scan more buckets
-		// but for now a bounded default is safer than scanning all time.
-		return []time.Time{now.Truncate(bucketSize)}
+		// No time bounds — scan all buckets up to a safety limit.
+		// This ensures unbounded queries like "| stats count" return
+		// historical data rather than only the current bucket.
+		start := now.Add(-time.Duration(maxUnboundedBuckets) * bucketSize).Truncate(bucketSize).UTC()
+		end := now.Truncate(bucketSize).UTC()
+		var buckets []time.Time
+		for t := start; !t.After(end); t = t.Add(bucketSize) {
+			buckets = append(buckets, t)
+		}
+		return buckets
 	}
 
 	earliest := bounds.Earliest

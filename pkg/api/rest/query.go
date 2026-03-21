@@ -70,6 +70,13 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 		return
 	}
 
+	if ucErr := spl2.CheckUnsupportedCommands(query); ucErr != nil {
+		respondError(w, ErrCodeUnsupportedCommand, http.StatusBadRequest,
+			ucErr.Error(), WithSuggestion(ucErr.Hint))
+
+		return
+	}
+
 	mode, wait := mapQueryMode(req.Wait)
 	limit := clampLimit(req.Limit, s.queryCfg)
 

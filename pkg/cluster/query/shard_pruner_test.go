@@ -210,8 +210,11 @@ func TestShardPruner_FallbackToReplica(t *testing.T) {
 
 func TestComputeTimeBuckets_NilBounds(t *testing.T) {
 	buckets := computeTimeBuckets(nil, 24*time.Hour)
-	if len(buckets) != 1 {
-		t.Fatalf("expected 1 bucket for nil bounds, got %d", len(buckets))
+	// With 24h bucket size, nil bounds should return maxUnboundedBuckets+1
+	// buckets (365 days back + current day).
+	expected := maxUnboundedBuckets + 1
+	if len(buckets) != expected {
+		t.Fatalf("expected %d buckets for nil bounds, got %d", expected, len(buckets))
 	}
 }
 

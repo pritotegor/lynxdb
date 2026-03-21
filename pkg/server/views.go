@@ -203,6 +203,13 @@ func (e *Engine) RunQueryBackfill(ctx context.Context, viewName string) error {
 		return fmt.Errorf("backfill: parse query for %s: %w", viewName, err)
 	}
 
+	// If the spec has an auto-injected hidden count (for avg merge correctness),
+	// inject a matching count aggregation into the AST so the backfill results
+	// contain the count column needed by finalizedResultsToPartialGroups.
+	if def.AggSpec != nil {
+		injectAutoCountIntoAST(prog, def.AggSpec)
+	}
+
 	opt := optimizer.New()
 	prog.Main = opt.Optimize(prog.Main)
 	for i := range prog.Datasets {
@@ -280,11 +287,10 @@ func (e *Engine) RunQueryBackfill(ctx context.Context, viewName string) error {
 //
 // For most functions the conversion is straightforward (count→{Count:N},
 // min→{Min:V}, max→{Max:V}). For avg, both sum and count are needed to store
-// correct intermediate state. If the spec also includes a count function,
-// it is used to reconstruct: sum = avg_value * count. Otherwise
-// {Sum: avg_value, Count: 1} is stored — a documented v1 limitation that means
-// backfill avg and live avg merge as if backfill represents 1 observation
-// per group. Users who need exact avg merge should include count in the query.
+// correct intermediate state. The spec's count function (either user-provided
+// or auto-injected as _mv_auto_count by convertAggExprs) is used to
+// reconstruct: sum = avg_value * count. If no count is found (e.g., legacy
+// specs created before the auto-inject fix), rowCount=1 is used as fallback.
 func finalizedResultsToPartialGroups(
 	results []spl2.ResultRow,
 	spec *enginepipeline.PartialAggSpec,
@@ -539,6 +545,44 @@ func resultRowsToEvents(rows []spl2.ResultRow, viewName string) []*event.Event {
 	}
 
 	return events
+}
+
+// injectAutoCountIntoAST walks the parsed program's AST and injects a
+// "count as _mv_auto_count" aggregation into the first StatsCommand or
+// TimechartCommand if the spec contains the auto-injected hidden count.
+// This ensures the backfill query results include the count column that
+// finalizedResultsToPartialGroups needs for correct weighted avg merge.
+func injectAutoCountIntoAST(prog *spl2.Program, spec *enginepipeline.PartialAggSpec) {
+	// Check if the spec has the auto-injected hidden count.
+	hasAutoCount := false
+	for _, fn := range spec.Funcs {
+		if fn.Hidden && fn.Name == "count" && fn.Alias == views.MVAutoCountAlias {
+			hasAutoCount = true
+
+			break
+		}
+	}
+	if !hasAutoCount || prog.Main == nil {
+		return
+	}
+
+	autoCountAgg := spl2.AggExpr{
+		Func:  "count",
+		Alias: views.MVAutoCountAlias,
+	}
+
+	for _, cmd := range prog.Main.Commands {
+		switch c := cmd.(type) {
+		case *spl2.StatsCommand:
+			c.Aggregations = append(c.Aggregations, autoCountAgg)
+
+			return
+		case *spl2.TimechartCommand:
+			c.Aggregations = append(c.Aggregations, autoCountAgg)
+
+			return
+		}
+	}
 }
 
 // ListViews implements pipeline.ViewManager for the engine.

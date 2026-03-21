@@ -1,4 +1,4 @@
-package vm
+package vm //nolint:staticcheck // Intentional use of deprecated As*() methods — see VM struct godoc.
 
 import (
 	"encoding/json"
@@ -25,6 +25,10 @@ var (
 // ErrInvalidBytecode is returned when the program contains truncated
 // instructions or out-of-range operand indices.
 var ErrInvalidBytecode = errors.New("vm: invalid bytecode")
+
+// ErrVMTypeMismatch is returned when a deprecated As*() method panics due to
+// a type mismatch. This indicates a compiler bug.
+var ErrVMTypeMismatch = errors.New("vm: type mismatch (possible compiler bug)")
 
 // VM is a stack-based virtual machine for evaluating SPL2 expressions.
 // The VM is designed to be reused across events with zero allocations on the hot path.
@@ -372,7 +376,13 @@ func (vm *VM) execReplace(ins []byte, ip int) (int, error) {
 
 // Execute runs a compiled program against a set of event fields.
 // Returns the top-of-stack value. The VM instance can be reused.
-func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value, error) {
+func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (result event.Value, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", ErrVMTypeMismatch, r)
+		}
+	}()
+
 	vm.sp = 0
 	vm.ensureRegexCache(prog)
 	vm.ensureCIDRCache(prog)

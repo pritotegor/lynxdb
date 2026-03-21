@@ -1,9 +1,9 @@
-//go:build !linux
+//go:build !linux && !darwin
 
 package compaction
 
-// AdviseSequential is a no-op on non-Linux platforms where fadvise is not available.
+// AdviseSequential is a no-op on platforms where fadvise/fcntl hints are not available.
 func AdviseSequential(_ uintptr) {}
 
-// AdviseDontNeed is a no-op on non-Linux platforms where fadvise is not available.
+// AdviseDontNeed is a no-op on platforms where fadvise/fcntl hints are not available.
 func AdviseDontNeed(_ uintptr) {}

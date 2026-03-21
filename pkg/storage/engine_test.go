@@ -21,7 +21,7 @@ func TestEngine_EphemeralIngestAndQuery(t *testing.T) {
 		`{"level":"warn","msg":"slow query","source":"db"}`,
 	}
 
-	n, err := eng.IngestLines(lines, IngestOpts{Source: "test"})
+	n, err := eng.IngestLines(context.Background(), lines, IngestOpts{Source: "test"})
 	if err != nil {
 		t.Fatalf("IngestLines: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestEngine_EphemeralIngestReader(t *testing.T) {
 {"level":"info","msg":"test2"}
 {"level":"error","msg":"test3"}
 `
-	n, err := eng.IngestReader(strings.NewReader(data), IngestOpts{Source: "stdin"})
+	n, err := eng.IngestReader(context.Background(), strings.NewReader(data), IngestOpts{Source: "stdin"})
 	if err != nil {
 		t.Fatalf("IngestReader: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestEngine_EphemeralClose(t *testing.T) {
 		`{"msg":"event1"}`,
 		`{"msg":"event2"}`,
 	}
-	_, err := eng.IngestLines(lines, IngestOpts{})
+	_, err := eng.IngestLines(context.Background(), lines, IngestOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestEngine_EphemeralNoFilesLeftAfterClose(t *testing.T) {
 	for i := range lines {
 		lines[i] = `{"msg":"test event","index":0}`
 	}
-	_, err := eng.IngestLines(lines, IngestOpts{})
+	_, err := eng.IngestLines(context.Background(), lines, IngestOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}

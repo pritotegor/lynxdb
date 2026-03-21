@@ -112,6 +112,9 @@ type Engine struct {
 	bufMgrCancel     context.CancelFunc              // cancels the bufMgr scheduler goroutine on shutdown
 	segCacheConsumer *consumers.SegmentCacheConsumer // segment cache backed by bufMgr (nil when bufMgr is nil)
 
+	// Job GC goroutine lifecycle.
+	jobGCCancel context.CancelFunc // cancels the startJobGC goroutine on shutdown
+
 	// Ingest dedup stage (nil when ingest.dedup_enabled is false).
 	ingestDedup *ingestpipeline.DedupStage
 
@@ -369,7 +372,9 @@ func (e *Engine) Start(ctx context.Context) error {
 		)
 	}
 
-	go e.startJobGC(ctx)
+	jobGCCtx, jobGCCancel := context.WithCancel(ctx)
+	e.jobGCCancel = jobGCCancel
+	go e.startJobGC(jobGCCtx)
 
 	if e.dataDir != "" {
 		// Start deletion pacer for rate-limited file removal.
@@ -395,7 +400,10 @@ func (e *Engine) PrepareShutdown() {
 
 // Shutdown performs graceful cleanup: flush batcher, close registry, close mmaps.
 // Returns an aggregated error if any step fails.
-func (e *Engine) Shutdown(_ time.Duration) error {
+func (e *Engine) Shutdown(timeout time.Duration) error {
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
 	var errs []error
 
 	// Flush remaining buffered events via the async batcher.
@@ -414,6 +422,11 @@ func (e *Engine) Shutdown(_ time.Duration) error {
 		}
 	}
 
+	// Stop the job GC goroutine.
+	if e.jobGCCancel != nil {
+		e.jobGCCancel()
+	}
+
 	// Retire all segments via epoch advance so background readers can drain.
 	e.mu.Lock()
 	old := e.currentEpoch.Load()
@@ -425,7 +438,7 @@ func (e *Engine) Shutdown(_ time.Duration) error {
 	// Wait for active queries to drain with timeout.
 	select {
 	case <-old.done:
-	case <-time.After(30 * time.Second):
+	case <-time.After(timeout):
 		e.logger.Warn("shutdown: epoch drain timeout",
 			"remaining_readers", old.readers.Load())
 	}

@@ -49,7 +49,7 @@ func runBench(cmd *cobra.Command, args []string) error {
 	eng := storage.NewEphemeralEngine()
 	defer eng.Close()
 	ingestStart := time.Now()
-	count, err := eng.IngestLines(lines, storage.IngestOpts{
+	count, err := eng.IngestLines(context.Background(), lines, storage.IngestOpts{
 		Source:     "bench",
 		SourceType: "bench",
 	})

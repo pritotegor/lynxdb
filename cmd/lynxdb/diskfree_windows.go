@@ -2,10 +2,28 @@
 
 package main
 
-import "errors"
+import (
+	"unsafe"
 
-// diskFreeBytes is not implemented on Windows.
-// The doctor command degrades gracefully — it simply omits the free space detail.
-func diskFreeBytes(_ string) (uint64, error) {
-	return 0, errors.New("disk free: not implemented on windows")
+	"golang.org/x/sys/windows"
+)
+
+// diskFreeBytes returns the number of bytes available to the calling user
+// on the filesystem containing path, using the Win32 GetDiskFreeSpaceExW API.
+func diskFreeBytes(path string) (uint64, error) {
+	pathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+	var freeBytesAvailable uint64
+	err = windows.GetDiskFreeSpaceEx(
+		pathPtr,
+		(*uint64)(unsafe.Pointer(&freeBytesAvailable)),
+		nil,
+		nil,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return freeBytesAvailable, nil
 }

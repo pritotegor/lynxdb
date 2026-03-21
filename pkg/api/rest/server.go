@@ -28,27 +28,28 @@ import (
 
 // Server is the main LynxDB API server.
 type Server struct {
-	engine             *server.Engine
-	keyStore           *auth.KeyStore // Nil when auth is disabled.
-	queryService       *usecases.QueryService
-	viewService        *usecases.ViewService
-	tailService        *usecases.TailService
-	alertMgr           *alerts.Manager
-	queryStore         *savedqueries.Store
-	dashboardStore     *dashboards.DashboardStore
-	runtimeCfg         *config.Config
-	cfgMu              sync.RWMutex
-	httpServer         *http.Server
-	listenAddr         atomic.Value  // stores resolved listen address (string)
-	ready              chan struct{} // closed when server is ready to accept requests
-	queryCfg           config.QueryConfig
-	ingestCfg          config.IngestConfig
-	shutdownTimeout    time.Duration
-	rateLimiter        *RateLimiter // nil if rate limiting is disabled
-	tailCfg            config.TailConfig
-	activeTailSessions atomic.Int64 // current number of active tail SSE sessions
-	degraded           atomic.Bool  // true when a persistent store fell back to in-memory
-	tlsConfig          *tls.Config  // non-nil when TLS is enabled
+	engine               *server.Engine
+	keyStore             *auth.KeyStore // Nil when auth is disabled.
+	queryService         *usecases.QueryService
+	viewService          *usecases.ViewService
+	tailService          *usecases.TailService
+	alertMgr             *alerts.Manager
+	queryStore           *savedqueries.Store
+	dashboardStore       *dashboards.DashboardStore
+	runtimeCfg           *config.Config
+	cfgMu                sync.RWMutex
+	httpServer           *http.Server
+	listenAddr           atomic.Value  // stores resolved listen address (string)
+	ready                chan struct{} // closed when server is ready to accept requests
+	queryCfg             config.QueryConfig
+	ingestCfg            config.IngestConfig
+	shutdownTimeout      time.Duration
+	alertShutdownTimeout time.Duration
+	rateLimiter          *RateLimiter // nil if rate limiting is disabled
+	tailCfg              config.TailConfig
+	activeTailSessions   atomic.Int64 // current number of active tail SSE sessions
+	degraded             atomic.Bool  // true when a persistent store fell back to in-memory
+	tlsConfig            *tls.Config  // non-nil when TLS is enabled
 }
 
 // Config configures the API server.
@@ -166,6 +167,11 @@ func NewServer(cfg Config) (*Server, error) {
 		shutdownTimeout = 30 * time.Second
 	}
 
+	alertShutdownTimeout := cfg.HTTP.AlertShutdownTimeout
+	if alertShutdownTimeout == 0 {
+		alertShutdownTimeout = 10 * time.Second
+	}
+
 	// Build runtime config snapshot. Only override defaults for sub-configs
 	// that the caller explicitly provided (non-zero SyncTimeout indicates
 	// the QueryConfig was set, etc.).
@@ -183,21 +189,22 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		engine:          engine,
-		keyStore:        cfg.KeyStore,
-		queryService:    queryService,
-		viewService:     viewService,
-		tailService:     tailService,
-		alertMgr:        alertMgr,
-		queryStore:      qStore,
-		dashboardStore:  dStore,
-		runtimeCfg:      runtimeCfg,
-		ready:           make(chan struct{}),
-		queryCfg:        cfg.Query,
-		ingestCfg:       cfg.Ingest,
-		shutdownTimeout: shutdownTimeout,
-		tailCfg:         cfg.Tail,
-		tlsConfig:       cfg.TLSConfig,
+		engine:               engine,
+		keyStore:             cfg.KeyStore,
+		queryService:         queryService,
+		viewService:          viewService,
+		tailService:          tailService,
+		alertMgr:             alertMgr,
+		queryStore:           qStore,
+		dashboardStore:       dStore,
+		runtimeCfg:           runtimeCfg,
+		ready:                make(chan struct{}),
+		queryCfg:             cfg.Query,
+		ingestCfg:            cfg.Ingest,
+		shutdownTimeout:      shutdownTimeout,
+		alertShutdownTimeout: alertShutdownTimeout,
+		tailCfg:              cfg.Tail,
+		tlsConfig:            cfg.TLSConfig,
 	}
 	if storeDegraded {
 		s.degraded.Store(true)
@@ -387,14 +394,16 @@ func NewServer(cfg Config) (*Server, error) {
 	if idleTimeout == 0 {
 		idleTimeout = 120 * time.Second
 	}
-	// Build middleware chain: logging → rate limiter → auth → body limit → mux.
+	// Build middleware chain (execution order, outer → inner):
+	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → mux.
+	// Auth runs before rate limiting so unauthenticated requests don't consume quota.
 	var handler http.Handler = mux
 	handler = MaxBodyMiddleware(int64(cfg.Ingest.MaxBodySize), handler)
-	handler = KeyAuthMiddleware(cfg.KeyStore, handler)
 	if cfg.HTTP.RateLimit > 0 {
 		s.rateLimiter = NewRateLimiter(cfg.HTTP.RateLimit, int(cfg.HTTP.RateLimit)*2)
 		handler = RateLimitMiddleware(s.rateLimiter, handler)
 	}
+	handler = KeyAuthMiddleware(cfg.KeyStore, handler)
 	handler = LoggingMiddleware(cfg.Logger, handler)
 	handler = RequestIDMiddleware(handler)
 	handler = RecoveryMiddleware(cfg.Logger, handler)
@@ -459,8 +468,8 @@ func (s *Server) Start(ctx context.Context) error {
 			}()
 			select {
 			case <-alertDone:
-			case <-time.After(10 * time.Second):
-				s.engine.Logger().Warn("alert manager stop timed out after 10s, proceeding with shutdown")
+			case <-time.After(s.alertShutdownTimeout):
+				s.engine.Logger().Warn("alert manager stop timed out, proceeding with shutdown", "timeout", s.alertShutdownTimeout)
 			}
 		}
 
@@ -526,7 +535,9 @@ func (s *Server) Engine() *server.Engine {
 
 func httpError(w http.ResponseWriter, msg string, code int) {
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
+		slog.Warn("failed to write error response", "error", err)
+	}
 }
 
 // requirePathValue extracts a named path parameter and validates it is non-empty.

@@ -2,6 +2,7 @@ package alerts
 
 import (
 	crypto_rand "crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"time"
@@ -145,7 +146,10 @@ func (in *AlertInput) ToAlert() *Alert {
 
 func generateAlertID() string {
 	b := make([]byte, 8)
-	_, _ = crypto_rand.Read(b)
+	if _, err := crypto_rand.Read(b); err != nil {
+		// Fallback: use timestamp-based ID if crypto/rand fails.
+		binary.BigEndian.PutUint64(b, uint64(time.Now().UnixNano()))
+	}
 
 	return "alt_" + hex.EncodeToString(b)
 }

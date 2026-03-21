@@ -33,15 +33,15 @@ func (ci *CacheInvalidator) HandlePartCommitted(n *clusterpb.PartCommittedNotifi
 		return
 	}
 
-	// For now, bump the cache generation which invalidates all entries.
-	// A more targeted approach would iterate cache keys and check time
-	// range overlap, but the generation bump is simple and correct.
-	//
-	// The cache.Store already supports ingest-generation-based invalidation
-	// (key includes ingest gen), so we rely on the engine's ingestGen
-	// counter being bumped when parts arrive. This handler serves as
-	// the trigger point for that bump.
-	ci.logger.Debug("cache invalidation triggered by part commit",
+	if err := ci.cache.Clear(); err != nil {
+		ci.logger.Warn("cache invalidation failed after part commit",
+			"shard_id", n.ShardId,
+			"part_id", n.PartId,
+			"error", err)
+		return
+	}
+
+	ci.logger.Debug("cache invalidated after part commit",
 		"shard_id", n.ShardId,
 		"part_id", n.PartId,
 		"events", n.EventCount)

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -255,7 +256,9 @@ func loadCredentialsFile(path string) *credentialsFile {
 
 	data, err := os.ReadFile(path)
 	if err == nil {
-		_ = yaml.Unmarshal(data, &f)
+		if unmarshalErr := yaml.Unmarshal(data, &f); unmarshalErr != nil {
+			slog.Warn("failed to parse credentials file, treating as empty", "path", path, "error", unmarshalErr)
+		}
 	}
 
 	if f.Servers == nil {

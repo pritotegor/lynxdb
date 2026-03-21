@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/cespare/xxhash/v2"
+
 	"github.com/lynxbase/lynxdb/internal/objstore"
 	"github.com/lynxbase/lynxdb/pkg/cluster"
 	ingestcluster "github.com/lynxbase/lynxdb/pkg/cluster/ingest"
@@ -47,11 +49,27 @@ func (e *Engine) InitCluster(node *cluster.Node, clientPool *rpc.ClientPool, obj
 	}
 
 	// Part notifier (fire-and-forget to query nodes).
+	// Discovers query nodes from the shard map cache's NodeAddrs/NodeRoles,
+	// which are populated by WatchShardMap from the meta service.
 	e.clusterNotifier = ingestcluster.NewPartNotifier(clientPool, func() []ingestcluster.NodeAddress {
-		// TODO: resolve query node addresses from shard map cache or node registry.
-		// For now, return empty — notifications will be skipped until Phase 3
-		// adds query node discovery.
-		return nil
+		sm := node.ShardMapCache().Get()
+		if sm == nil {
+			return nil
+		}
+		var addrs []ingestcluster.NodeAddress
+		for id, grpcAddr := range sm.NodeAddrs {
+			roles := sm.NodeRoles[id]
+			for _, r := range roles {
+				if r == "query" {
+					addrs = append(addrs, ingestcluster.NodeAddress{
+						ID:       id,
+						GRPCAddr: grpcAddr,
+					})
+					break
+				}
+			}
+		}
+		return addrs
 	}, logger)
 
 	// Replicator.
@@ -77,9 +95,7 @@ func (e *Engine) InitCluster(node *cluster.Node, clientPool *rpc.ClientPool, obj
 		Sequencer:     e.clusterSequencer,
 		MetaLoss:      e.clusterMetaLoss,
 		NodeAddrs: func() map[sharding.NodeID]string {
-			// TODO: build from node registry / shard map cache.
-			// For now return empty — remote routing will fail gracefully.
-			return nil
+			return node.ShardMapCache().GetNodeAddrs()
 		},
 		Logger: logger,
 	})
@@ -151,9 +167,11 @@ func (e *Engine) uploadAndCatalog(ctx context.Context, meta *part.Meta, objStore
 	}
 
 	// Compute S3 key.
-	// Virtual partition defaults to 0 for now — the full shard-aware batcher
-	// (Phase 3) will propagate the virtual partition from the ShardID.
-	var virtualPartition uint32
+	// Derive virtual partition from the index name using the same hash family
+	// as sharding.AssignShard. This ensures parts for the same index land under
+	// a consistent S3 prefix until the full shard-aware batcher propagates the
+	// partition from the ShardID directly.
+	virtualPartition := computeVirtualPartition(meta.Index, uint32(e.clusterCfg.VirtualPartitionCount))
 	partFilename := filepath.Base(meta.Path)
 	s3Key := part.S3PartKey(meta.Index, virtualPartition, meta.MinTime, partFilename)
 
@@ -215,4 +233,16 @@ func (e *Engine) ClusterRouter() *ingestcluster.Router {
 // ClusterSequencer returns the batch sequencer, or nil in single-node mode.
 func (e *Engine) ClusterSequencer() *ingestcluster.BatchSequencer {
 	return e.clusterSequencer
+}
+
+// computeVirtualPartition derives a deterministic virtual partition from the
+// index name. Uses xxhash64 (same hash family as sharding.AssignShard) to
+// ensure consistent S3 key prefixes per index.
+// When vPartCount is 0, returns 0 (single-partition fallback).
+func computeVirtualPartition(index string, vPartCount uint32) uint32 {
+	if vPartCount == 0 {
+		return 0
+	}
+
+	return uint32(xxhash.Sum64String(index) % uint64(vPartCount))
 }

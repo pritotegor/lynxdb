@@ -146,6 +146,10 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 	totalEvents := 0
 	normalizedQuery := ensureFromClause(query)
 
+	if err := spl2.CheckUnsupportedCommands(normalizedQuery); err != nil {
+		return err
+	}
+
 	if hints := spl2.DetectCompatHints(normalizedQuery); len(hints) > 0 {
 		fmt.Fprint(os.Stderr, spl2.FormatCompatHints(hints))
 	}
@@ -213,6 +217,10 @@ func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool,
 		src = "stdin"
 	}
 	normalizedQuery := ensureFromClause(query)
+
+	if err := spl2.CheckUnsupportedCommands(normalizedQuery); err != nil {
+		return err
+	}
 
 	if hints := spl2.DetectCompatHints(normalizedQuery); len(hints) > 0 {
 		fmt.Fprint(os.Stderr, spl2.FormatCompatHints(hints))

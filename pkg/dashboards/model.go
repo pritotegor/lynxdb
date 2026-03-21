@@ -2,6 +2,7 @@ package dashboards
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"time"
 )
@@ -125,7 +126,10 @@ func (i DashboardInput) ToDashboard() *Dashboard {
 
 func generateDashboardID() string {
 	b := make([]byte, 8)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: use timestamp-based ID if crypto/rand fails.
+		binary.BigEndian.PutUint64(b, uint64(time.Now().UnixNano()))
+	}
 
 	return "dsh_" + hex.EncodeToString(b)
 }

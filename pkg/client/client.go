@@ -243,7 +243,7 @@ func (c *Client) doNoContent(ctx context.Context, method, path string) error {
 	}
 
 	// Drain body to allow connection reuse.
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body) //nolint:errcheck // best-effort drain; body.Close() handles cleanup
 
 	return nil
 }

@@ -310,7 +310,15 @@ func buildRareSpec(c *spl2.RareCommand) (*pipeline.PartialAggSpec, []spl2.Comman
 	return spec, queryCmds, groupBy, nil
 }
 
+// MVAutoCountAlias is the alias used for the auto-injected hidden count function
+// that enables correct weighted avg merge during backfill. Exported so that the
+// backfill query builder can inject a matching aggregation into the AST.
+const MVAutoCountAlias = "_mv_auto_count"
+
 // convertAggExprs validates and converts SPL2 AggExpr slices to PartialAggFunc slices.
+// If the spec contains avg but no count, a hidden count function is auto-injected
+// so that backfill avg merge uses correct weighted averages instead of treating
+// each group as a single observation.
 func convertAggExprs(aggs []spl2.AggExpr) ([]pipeline.PartialAggFunc, error) {
 	funcs := make([]pipeline.PartialAggFunc, 0, len(aggs))
 	for _, agg := range aggs {
@@ -336,6 +344,27 @@ func convertAggExprs(aggs []spl2.AggExpr) ([]pipeline.PartialAggFunc, error) {
 			Name:  strings.ToLower(agg.Func),
 			Field: field,
 			Alias: alias,
+		})
+	}
+
+	// Auto-inject a hidden count function when avg is present without count.
+	// Without this, backfill avg merge falls back to rowCount=1 per group,
+	// producing incorrect weighted averages.
+	hasAvg, hasCount := false, false
+	for _, fn := range funcs {
+		if fn.Name == "avg" {
+			hasAvg = true
+		}
+		if fn.Name == "count" {
+			hasCount = true
+		}
+	}
+	if hasAvg && !hasCount {
+		funcs = append(funcs, pipeline.PartialAggFunc{
+			Name:   "count",
+			Field:  "",
+			Alias:  MVAutoCountAlias,
+			Hidden: true,
 		})
 	}
 

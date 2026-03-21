@@ -236,10 +236,11 @@ type IngestConfig struct {
 
 // HTTPConfig holds HTTP server parameters.
 type HTTPConfig struct {
-	IdleTimeout       time.Duration `yaml:"idle_timeout"          json:"idle_timeout"`
-	ShutdownTimeout   time.Duration `yaml:"shutdown_timeout"      json:"shutdown_timeout"`
-	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"   json:"read_header_timeout"`
-	RateLimit         float64       `yaml:"rate_limit"            json:"rate_limit"` // requests per second; 0 = unlimited
+	IdleTimeout          time.Duration `yaml:"idle_timeout"              json:"idle_timeout"`
+	ShutdownTimeout      time.Duration `yaml:"shutdown_timeout"          json:"shutdown_timeout"`
+	AlertShutdownTimeout time.Duration `yaml:"alert_shutdown_timeout"    json:"alert_shutdown_timeout"` // Timeout for graceful alert manager stop during shutdown.
+	ReadHeaderTimeout    time.Duration `yaml:"read_header_timeout"       json:"read_header_timeout"`
+	RateLimit            float64       `yaml:"rate_limit"                json:"rate_limit"` // requests per second; 0 = unlimited
 }
 
 // TailConfig holds live tail session parameters.
@@ -383,9 +384,11 @@ func DefaultConfig() *Config {
 		},
 
 		HTTP: HTTPConfig{
-			IdleTimeout:       120 * time.Second,
-			ShutdownTimeout:   30 * time.Second,
-			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:          120 * time.Second,
+			ShutdownTimeout:      30 * time.Second,
+			AlertShutdownTimeout: 10 * time.Second,
+			ReadHeaderTimeout:    10 * time.Second,
+			RateLimit:            1000, // 1000 req/s per IP
 		},
 
 		Tail: TailConfig{

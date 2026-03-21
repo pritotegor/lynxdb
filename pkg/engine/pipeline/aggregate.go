@@ -39,6 +39,13 @@ const maxInMemoryGroups = 10_000_000
 // group for values() and stdev. Prevents unbounded memory for high-cardinality groups.
 const maxValuesPerGroup = 100_000
 
+// mergePartitionsLegacy is the number of hash partitions used for the legacy
+// (unpartitioned) spill file merge. During merge, K passes are made over the
+// spill files; on pass k only groups with hash(groupKey) % K == k are loaded.
+// This bounds peak merge memory to approximately totalGroups/K instead of
+// loading all groups simultaneously. Must be >= 1.
+const mergePartitionsLegacy = 16
+
 // Memory estimation constants for operator tracking.
 // These are deliberately conservative (over-estimates) to avoid under-counting.
 const (
@@ -620,11 +627,18 @@ func (a *AggregateIterator) buildResult() *Batch {
 		return a.buildResultPartitioned()
 	}
 
-	// Legacy path: no spill occurred, or legacy unpartitioned spill files.
+	// Legacy path with spill files: use partitioned merge to bound memory.
 	if len(a.spillFiles) > 0 {
-		a.mergeSpillFiles()
+		return a.mergeSpillFilesPartitioned()
 	}
 
+	// No spill: emit all in-memory groups directly.
+	return a.emitAllGroups()
+}
+
+// emitAllGroups finalizes all in-memory groups into a result batch.
+// Used when no spill files exist (everything fits in memory).
+func (a *AggregateIterator) emitAllGroups() *Batch {
 	// Count total groups across all chains.
 	totalGroups := 0
 	for _, chain := range a.groups {
@@ -704,25 +718,133 @@ func (a *AggregateIterator) buildResultPartitioned() *Batch {
 	return result
 }
 
-// mergeSpillFiles reads back spill files and re-aggregates their rows.
-// For AVG/SUM, spill files store raw (sum, count) tuples under suffixed keys
-// to enable exact re-aggregation. Other agg types store finalized values.
+// mergeSpillFilesPartitioned performs a hash-partitioned multi-pass merge of
+// legacy (unpartitioned) spill files. Instead of loading ALL unique groups
+// into memory simultaneously, it makes K passes over the spill files
+// (K = mergePartitionsLegacy). On pass k, only rows whose
+// hash(groupKey) % K == k are loaded and merged. After each pass, finalized
+// groups are emitted to the result batch and the in-memory groups map is
+// cleared. This bounds peak merge memory to approximately totalGroups/K
+// instead of totalGroups.
 //
-// The merge phase does NOT enforce memory budget tracking. Rationale:
-// during aggregation, the budget controlled spilling — the number of unique
-// groups was bounded by the budget. During merge, we must reconstruct all
-// unique groups to produce correct results. If total unique groups exceed
-// memory, the query needs a larger budget (or fewer groups). Enforcing the
-// budget here would cause an infinite spill→merge→spill loop or silently
-// lose groups.
+// The merge within each partition is budget-exempt (uses findOrCreateGroupMerge).
+// Rationale: partitioning already reduces peak memory by K; enforcing the
+// per-query budget would cause infinite spill-merge-spill loops.
 //
-// LIMITATION: If a query has N unique groups that individually fit in
-// memory batches but not all at once (e.g., 10M groups at 160 bytes each =
-// ~1.6GB), the merge will load all N groups into memory simultaneously.
-// A partitioned external aggregation (hash-partition into K buckets, merge
-// one at a time) would bound merge memory to N/K, but is not yet implemented.
-// If merge memory exceeds 2x the original budget, a warning is logged.
-func (a *AggregateIterator) mergeSpillFiles() {
+// For queries with very few spill files or groups, the overhead of K passes
+// is minimal because the I/O is sequential and typically OS-cached after the
+// first pass.
+func (a *AggregateIterator) mergeSpillFilesPartitioned() *Batch {
+	K := mergePartitionsLegacy
+	if K < 1 {
+		K = 1
+	}
+
+	// Pre-partition in-memory groups by hash bucket so we can process them
+	// alongside the spill files on the matching pass.
+	inMemPartitions := make([]map[uint64][]*aggGroup, K)
+	for i := range inMemPartitions {
+		inMemPartitions[i] = make(map[uint64][]*aggGroup)
+	}
+	totalInMem := 0
+	for h, chain := range a.groups {
+		partIdx := int(h % uint64(K))
+		inMemPartitions[partIdx][h] = chain
+		totalInMem += len(chain)
+	}
+
+	// Estimate result size for pre-allocation (capped to avoid huge allocs).
+	estimatedTotal := totalInMem + int(a.spilledRows)
+	capLimit := 1_000_000
+	if estimatedTotal < capLimit {
+		capLimit = estimatedTotal
+	}
+	if capLimit < 64 {
+		capLimit = 64
+	}
+	result := NewBatch(capLimit)
+
+	// Process each partition: load only groups matching this partition,
+	// merge with spill files, emit, then clear.
+	for partition := 0; partition < K; partition++ {
+		// Start with a clean groups map for this partition.
+		a.groups = make(map[uint64][]*aggGroup)
+		a.groupCount = 0
+
+		// Restore in-memory groups for this partition.
+		if len(inMemPartitions[partition]) > 0 {
+			for h, chain := range inMemPartitions[partition] {
+				a.groups[h] = chain
+				a.groupCount += len(chain)
+			}
+		}
+
+		// Read all spill files, only processing rows in this partition.
+		for _, path := range a.spillFiles {
+			sr, err := NewSpillReader(path)
+			if err != nil {
+				slog.Error("aggregate: failed to open legacy spill file for partitioned merge",
+					"path", path, "error", err, "partition", partition)
+
+				continue
+			}
+			for {
+				row, readErr := sr.ReadRow()
+				if errors.Is(readErr, io.EOF) || row == nil {
+					break
+				}
+				if readErr != nil {
+					break
+				}
+
+				h := a.groupKeyHash(row)
+				if int(h%uint64(K)) != partition {
+					continue // skip rows not in this partition
+				}
+
+				group := a.findOrCreateGroupMerge(h, row)
+				a.mergeAggStateFromSpillRow(group, row)
+			}
+			sr.Close()
+		}
+
+		// Emit finalized groups for this partition into the result batch.
+		emitPartitionGroups(a, result)
+	}
+
+	// Clean up spill files after all partitions are processed.
+	for _, path := range a.spillFiles {
+		if a.spillMgr != nil {
+			a.spillMgr.Release(path)
+		} else {
+			os.Remove(path)
+		}
+	}
+	a.spillFiles = nil
+
+	// Clear the groups map (last partition's groups are no longer needed).
+	a.groups = make(map[uint64][]*aggGroup)
+	a.groupCount = 0
+
+	// Handle no-groups + no-group-by case.
+	if result.Len == 0 && len(a.groupBy) == 0 {
+		row := make(map[string]event.Value, len(a.aggs))
+		for _, agg := range a.aggs {
+			row[agg.Alias] = a.finalizeState(&aggState{values: make(map[string]bool)}, agg.Name)
+		}
+		result.AddRow(row)
+	}
+
+	return result
+}
+
+// mergeSpillFilesSimple reads back all spill files and loads ALL unique groups
+// into memory simultaneously. This is the pre-partitioned approach kept as a
+// reference. For production use, mergeSpillFilesPartitioned is preferred as it
+// bounds merge memory to totalGroups/K.
+//
+// DEPRECATED: Use mergeSpillFilesPartitioned instead.
+func (a *AggregateIterator) mergeSpillFilesSimple() {
 	// Track pre-merge group count to detect unbounded growth.
 	preGroups := a.groupCount
 	peakBudget := a.acct.MaxUsed()
@@ -742,39 +864,7 @@ func (a *AggregateIterator) mergeSpillFiles() {
 			}
 			h := a.groupKeyHash(row)
 			group := a.findOrCreateGroupMerge(h, row)
-			for j, agg := range a.aggs {
-				fn := strings.ToLower(agg.Name)
-				switch fn {
-				case aggAvg:
-					// Read (sum, count) tuple from suffixed keys.
-					sumVal := row[agg.Alias+"__sum"]
-					countVal := row[agg.Alias+"__count"]
-					if sumF, ok := vm.ValueToFloat(sumVal); ok {
-						group.states[j].sum += sumF
-					}
-					if countF, ok := vm.ValueToFloat(countVal); ok {
-						group.states[j].count += int64(countF)
-					}
-				case aggSum:
-					// Read raw sum from suffixed key.
-					sumVal := row[agg.Alias+"__sum"]
-					a.mergeSpilledValue(&group.states[j], agg.Name, sumVal)
-				case aggDC:
-					a.mergeDCFromRow(&group.states[j], row, agg.Alias)
-				case aggValues:
-					a.mergeValuesFromRow(&group.states[j], row, agg.Alias)
-				case aggStdev:
-					a.mergeStdevFromRow(&group.states[j], row, agg.Alias)
-				case aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:
-					a.mergePercFromRow(&group.states[j], row, agg.Alias)
-				default:
-					val, ok := row[agg.Alias]
-					if !ok {
-						continue
-					}
-					a.mergeSpilledValue(&group.states[j], agg.Name, val)
-				}
-			}
+			a.mergeAggStateFromSpillRow(group, row)
 		}
 		sr.Close()
 
@@ -798,6 +888,46 @@ func (a *AggregateIterator) mergeSpillFiles() {
 			"merge_estimated_bytes", mergeGroupBytes,
 			"peak_budget_bytes", peakBudget,
 		)
+	}
+}
+
+// mergeAggStateFromSpillRow merges aggregation state from a legacy spill row
+// into an existing aggGroup. Handles all agg types with their suffixed-key
+// serialization format. This is the legacy counterpart of mergeAggStateFromRow
+// (which is used by the partitioned spill path in aggregate_partition.go).
+func (a *AggregateIterator) mergeAggStateFromSpillRow(group *aggGroup, row map[string]event.Value) {
+	for j, agg := range a.aggs {
+		fn := strings.ToLower(agg.Name)
+		switch fn {
+		case aggAvg:
+			// Read (sum, count) tuple from suffixed keys.
+			sumVal := row[agg.Alias+"__sum"]
+			countVal := row[agg.Alias+"__count"]
+			if sumF, ok := vm.ValueToFloat(sumVal); ok {
+				group.states[j].sum += sumF
+			}
+			if countF, ok := vm.ValueToFloat(countVal); ok {
+				group.states[j].count += int64(countF)
+			}
+		case aggSum:
+			// Read raw sum from suffixed key.
+			sumVal := row[agg.Alias+"__sum"]
+			a.mergeSpilledValue(&group.states[j], agg.Name, sumVal)
+		case aggDC:
+			a.mergeDCFromRow(&group.states[j], row, agg.Alias)
+		case aggValues:
+			a.mergeValuesFromRow(&group.states[j], row, agg.Alias)
+		case aggStdev:
+			a.mergeStdevFromRow(&group.states[j], row, agg.Alias)
+		case aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:
+			a.mergePercFromRow(&group.states[j], row, agg.Alias)
+		default:
+			val, ok := row[agg.Alias]
+			if !ok {
+				continue
+			}
+			a.mergeSpilledValue(&group.states[j], agg.Name, val)
+		}
 	}
 }
 

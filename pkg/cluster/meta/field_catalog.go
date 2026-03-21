@@ -9,11 +9,14 @@ import (
 
 // GlobalFieldInfo holds cluster-wide field metadata, merged from per-node deltas.
 type GlobalFieldInfo struct {
-	Name       string                    `msgpack:"name"`
-	Type       string                    `msgpack:"type"`        // dominant type across all nodes
-	TotalCount int64                     `msgpack:"total_count"` // sum of counts across all nodes
-	NodeCounts map[sharding.NodeID]int64 `msgpack:"node_counts"` // per-node event count for this field
-	TopValues  []FieldValueEntry         `msgpack:"top_values"`  // top 10 values by count
+	Name         string                     `msgpack:"name"`
+	Type         string                     `msgpack:"type"`          // dominant type across all nodes
+	TypeConflict bool                       `msgpack:"type_conflict"` // true when nodes disagree on type
+	TypeCounts   map[string]int             `msgpack:"type_counts"`   // type -> number of nodes reporting this type
+	TotalCount   int64                      `msgpack:"total_count"`   // sum of counts across all nodes
+	NodeCounts   map[sharding.NodeID]int64  `msgpack:"node_counts"`   // per-node event count for this field
+	NodeTypes    map[sharding.NodeID]string `msgpack:"node_types"`    // per-node reported type for voting
+	TopValues    []FieldValueEntry          `msgpack:"top_values"`    // top 10 values by count
 }
 
 // FieldValueEntry holds a field value and its occurrence count.
@@ -51,6 +54,7 @@ func (s *MetaState) applyUpdateFieldCatalog(payload []byte) error {
 			gfi = &GlobalFieldInfo{
 				Name:       fd.Name,
 				NodeCounts: make(map[sharding.NodeID]int64),
+				NodeTypes:  make(map[sharding.NodeID]string),
 			}
 			s.FieldCatalog[fd.Name] = gfi
 		}
@@ -65,10 +69,31 @@ func (s *MetaState) applyUpdateFieldCatalog(payload []byte) error {
 		}
 		gfi.TotalCount = total
 
-		// Set type from this delta (last writer wins for now;
-		// a more sophisticated approach would use type voting).
+		// Type voting: track per-node type and resolve to majority.
 		if fd.Type != "" {
-			gfi.Type = fd.Type
+			if gfi.NodeTypes == nil {
+				gfi.NodeTypes = make(map[sharding.NodeID]string)
+			}
+			gfi.NodeTypes[p.NodeID] = fd.Type
+
+			// Recompute type by majority voting across all reporting nodes.
+			typeCounts := make(map[string]int)
+			for _, t := range gfi.NodeTypes {
+				typeCounts[t]++
+			}
+			gfi.TypeCounts = typeCounts
+
+			// Find majority type.
+			bestType := ""
+			bestCount := 0
+			for t, c := range typeCounts {
+				if c > bestCount {
+					bestType = t
+					bestCount = c
+				}
+			}
+			gfi.Type = bestType
+			gfi.TypeConflict = len(typeCounts) > 1
 		}
 
 		// Merge top values: sum matching value counts, keep top 10.

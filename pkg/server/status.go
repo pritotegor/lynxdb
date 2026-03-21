@@ -197,7 +197,9 @@ func (e *Engine) Stats() StatsInfo {
 
 // CacheClear clears the query cache.
 func (e *Engine) CacheClear() {
-	_ = e.cache.Clear()
+	if err := e.cache.Clear(); err != nil {
+		e.logger.Warn("cache clear failed", "error", err)
+	}
 }
 
 // CacheStats returns cache statistics.
