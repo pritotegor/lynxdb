@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| where status >= 400 | keep service, status, level, duration_ms | order by -duration_ms | take 5

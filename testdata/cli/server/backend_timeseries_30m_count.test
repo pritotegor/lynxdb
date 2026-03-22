@@ -1,0 +1,2 @@
+# format: json
+FROM backend | bin timestamp span=30m as bucket | stats count by bucket | sort bucket

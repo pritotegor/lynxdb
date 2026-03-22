@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -116,7 +117,7 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 		snap := job.Snapshot()
 		if snap.Status == server.JobStatusError {
-			return nil, fmt.Errorf("%s", snap.Error)
+			return nil, errors.New(snap.Error)
 		}
 		rows := make([]map[string]interface{}, len(snap.Results))
 		for i, r := range snap.Results {
@@ -219,7 +220,14 @@ func NewServer(cfg Config) (*Server, error) {
 	mux := http.NewServeMux()
 
 	// Prometheus metrics endpoint (standard /metrics path).
-	mux.Handle("GET /metrics", promMetrics.Handler())
+	// Wraps the handler to refresh storage metrics on each scrape.
+	promHandler := promMetrics.Handler()
+	mux.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.engine != nil {
+			promMetrics.RecordStorageMetrics(s.engine.Metrics())
+		}
+		promHandler.ServeHTTP(w, r)
+	}))
 
 	// pprof debug endpoints for live CPU/memory profiling.
 	// Authenticated via KeyAuthMiddleware (under /api/v1/ prefix).

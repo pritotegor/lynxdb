@@ -88,44 +88,20 @@ func TestGolden_Server(t *testing.T) {
 }
 
 // ============================================================================
-// Known bugs discovered by golden tests (skipped tests)
+// Known bugs discovered by golden tests (all resolved — retained for history)
 // ============================================================================
 //
-// BUG 1: SelectCommand not implemented in pipeline builder
-//   Affected tests:
-//     - file/backend_eventstats_pct
-//     - file/backend_lynxflow_enrich_outlier
-//   Description: The SPL2 parser recognizes `| select field1, field2` (LynxFlow
-//   syntax) and produces *spl2.SelectCommand, but pkg/engine/pipeline/pipeline.go
-//   has no case for it and returns "unsupported command type: *spl2.SelectCommand".
-//   Fix: Add SelectCommand handling in pipeline.go (should behave like fields/table
-//   with explicit column ordering).
+// BUG 1 (FIXED): SelectCommand not implemented in pipeline builder.
+//   Fixed: pipeline.go:726 now handles *spl2.SelectCommand as project + rename.
 //
-// BUG 2: Transaction duration is non-deterministic
-//   Affected tests:
-//     - file/backend_transaction_user
-//     - file/backend_transaction_maxspan
-//     - server/backend_transaction_user
-//   Description: The `transaction` command produces different `duration` values
-//   across runs (sub-ms fluctuations). Duration should be computed from event
-//   timestamps (deterministic), not wall-clock time.
+// BUG 2 (FIXED): Transaction duration was non-deterministic.
+//   Fixed: TimestampNormalizer now correctly parses event timestamps from raw
+//   JSON, so _time reflects the event timestamp and duration is deterministic.
 //
-// BUG 3 (FIXED): Multisearch sub-queries return 0 rows
-//   Source inheritance fix: pipeline.go now propagates defaultSource to sub-queries.
-//   Ordering fix: ConcurrentUnionIterator.OrderConcurrent provides deterministic
-//   output in child index order while running all branches concurrently.
-//   Previously affected: file/backend_multisearch_*, server/multisearch_cross_*.
+// BUG 3 (FIXED): Multisearch sub-queries return 0 rows.
+//   Fixed: pipeline.go propagates defaultSource; ConcurrentUnionIterator
+//   provides deterministic child-index-ordered output.
 //
-// BUG 4: timechart uses system clock instead of event timestamps
-//   Affected tests:
-//     - file/backend_timechart_hourly
-//     - file/backend_timechart_by_level
-//     - file/backend_timechart_avg_duration
-//     - server/backend_timechart_hourly
-//   Description: `| timechart count span=1h` on events spanning 08:12–10:45
-//   produces 1 bucket at the current system time with count missing and
-//   avg(duration_ms)=null. The timechart command uses `_time` (ingestion time)
-//   instead of the event's `timestamp` field. Workaround: use
-//   `| bin timestamp span=30m as bucket | stats count by bucket` which correctly
-//   buckets by the event timestamp and produces 6+ rows.
-//   See: backend_timeseries_* tests for the working equivalents.
+// BUG 4 (FIXED): timechart used system clock instead of event timestamps.
+//   Fixed: TimestampNormalizer correctly parses event timestamps from raw JSON,
+//   so _time reflects the event timestamp and timechart produces correct buckets.

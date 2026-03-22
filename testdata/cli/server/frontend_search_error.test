@@ -1,0 +1,2 @@
+# format: json
+FROM frontend | search "ERROR" | stats count

@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| fillnull value="N/A" error, threat_type | where error!="N/A" | stats count by error | sort error

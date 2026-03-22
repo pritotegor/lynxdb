@@ -224,42 +224,6 @@ func CountTrue(bitmap []bool) int {
 	return count
 }
 
-// CompactInt64ByBitmap returns only elements where bitmap[i] is true.
-func CompactInt64ByBitmap(col []int64, bitmap []bool) []int64 {
-	result := make([]int64, 0, CountTrue(bitmap))
-	for i, v := range bitmap {
-		if v && i < len(col) {
-			result = append(result, col[i])
-		}
-	}
-
-	return result
-}
-
-// CompactFloat64ByBitmap returns only elements where bitmap[i] is true.
-func CompactFloat64ByBitmap(col []float64, bitmap []bool) []float64 {
-	result := make([]float64, 0, CountTrue(bitmap))
-	for i, v := range bitmap {
-		if v && i < len(col) {
-			result = append(result, col[i])
-		}
-	}
-
-	return result
-}
-
-// CompactStringByBitmap returns only elements where bitmap[i] is true.
-func CompactStringByBitmap(col []string, bitmap []bool) []string {
-	result := make([]string, 0, CountTrue(bitmap))
-	for i, v := range bitmap {
-		if v && i < len(col) {
-			result = append(result, col[i])
-		}
-	}
-
-	return result
-}
-
 // NotBitmap inverts a bitmap element-wise.
 func NotBitmap(bitmap []bool) []bool {
 	result := make([]bool, len(bitmap))

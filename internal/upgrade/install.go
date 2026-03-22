@@ -69,7 +69,7 @@ func Install(archivePath string) error {
 	if err := os.Rename(newExecPath, execPath); err != nil {
 		// Attempt to restore the old binary.
 		if restoreErr := os.Rename(oldExecPath, execPath); restoreErr != nil {
-			return fmt.Errorf("upgrade.Install: install failed (%v) and restore failed (%v)", err, restoreErr)
+			return fmt.Errorf("upgrade.Install: install failed (%w) and restore failed (%w)", err, restoreErr)
 		}
 		return fmt.Errorf("upgrade.Install: install new binary: %w", err)
 	}

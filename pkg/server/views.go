@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +13,9 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
+
+// ErrViewsNotAvailable is returned when materialized views are not configured.
+var ErrViewsNotAvailable = errors.New("materialized views not available")
 
 // defaultBackfillTimeout is the fallback when config is zero.
 const defaultBackfillTimeout = 4 * time.Hour
@@ -53,7 +57,7 @@ func (e *Engine) ListMV() []views.ViewDefinition {
 // GetMV returns a materialized view definition by name.
 func (e *Engine) GetMV(name string) (views.ViewDefinition, error) {
 	if e.viewRegistry == nil {
-		return views.ViewDefinition{}, fmt.Errorf("materialized views not available")
+		return views.ViewDefinition{}, ErrViewsNotAvailable
 	}
 
 	return e.viewRegistry.Get(name)
@@ -63,7 +67,7 @@ func (e *Engine) GetMV(name string) (views.ViewDefinition, error) {
 // Bug #4 fix: paused views are deactivated from dispatch — no ActivateView call.
 func (e *Engine) UpdateMV(def views.ViewDefinition) error {
 	if e.viewRegistry == nil {
-		return fmt.Errorf("materialized views not available")
+		return ErrViewsNotAvailable
 	}
 
 	e.mvDispatcher.DeactivateView(def.Name)
@@ -83,7 +87,7 @@ func (e *Engine) UpdateMV(def views.ViewDefinition) error {
 // DeleteMV deletes a materialized view.
 func (e *Engine) DeleteMV(name string) error {
 	if e.viewRegistry == nil {
-		return fmt.Errorf("materialized views not available")
+		return ErrViewsNotAvailable
 	}
 	e.mvDispatcher.DeactivateView(name)
 
@@ -106,7 +110,7 @@ func (e *Engine) NewBackfiller() *views.Backfiller {
 // ResolveView implements pipeline.ViewResolver for the engine.
 func (e *Engine) ResolveView(name string) ([]*event.Event, error) {
 	if e.viewRegistry == nil {
-		return nil, fmt.Errorf("materialized views not available")
+		return nil, ErrViewsNotAvailable
 	}
 	if _, err := e.viewRegistry.Get(name); err != nil {
 		return nil, err
@@ -118,7 +122,7 @@ func (e *Engine) ResolveView(name string) ([]*event.Event, error) {
 // CreateView implements pipeline.ViewManager for the engine.
 func (e *Engine) CreateView(name, query, retention string) error {
 	if e.viewRegistry == nil {
-		return fmt.Errorf("materialized views not available")
+		return ErrViewsNotAvailable
 	}
 	def := views.ViewDefinition{
 		Name:    name,
@@ -181,7 +185,7 @@ func (e *Engine) launchBackfill(viewName string) {
 // at query time (e.g., weighted avg instead of mean-of-means).
 func (e *Engine) RunQueryBackfill(ctx context.Context, viewName string) error {
 	if e.viewRegistry == nil {
-		return fmt.Errorf("materialized views not available")
+		return ErrViewsNotAvailable
 	}
 
 	def, err := e.viewRegistry.Get(viewName)
@@ -422,7 +426,7 @@ func toFloat64FromInterface(v interface{}) float64 {
 // Sets the view status to backfill and launches the async backfill goroutine.
 func (e *Engine) TriggerBackfill(name string) error {
 	if e.viewRegistry == nil {
-		return fmt.Errorf("materialized views not available")
+		return ErrViewsNotAvailable
 	}
 
 	def, err := e.viewRegistry.Get(name)
@@ -616,7 +620,7 @@ func (e *Engine) ListViews() []enginepipeline.ViewInfo {
 // DropView implements pipeline.ViewManager for the engine.
 func (e *Engine) DropView(name string) error {
 	if e.viewRegistry == nil {
-		return fmt.Errorf("materialized views not available")
+		return ErrViewsNotAvailable
 	}
 	e.mvDispatcher.DeactivateView(name)
 

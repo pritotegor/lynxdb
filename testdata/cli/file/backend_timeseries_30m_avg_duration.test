@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| bin timestamp span=30m as bucket | stats avg(duration_ms) as avg_dur by bucket | sort bucket

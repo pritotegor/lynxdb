@@ -1,0 +1,2 @@
+# format: json
+FROM backend | stats count as total, count(eval(level="ERROR")) as errors | eval error_pct=round(errors*100/total, 1) | fields total, errors, error_pct

@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| transaction user_id | fields user_id, duration, eventcount | sort user_id

@@ -1,0 +1,2 @@
+# format: json
+FROM audit_security | stats count

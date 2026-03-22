@@ -1,0 +1,2 @@
+# format: json
+FROM backend | where level="ERROR" | stats count

@@ -149,6 +149,8 @@ func (r *BatcherReplicator) ReplicateBatch(
 
 	case AckAll:
 		// Wait for all peers to acknowledge.
+		// Use asyncSem to bound concurrent goroutines — blocks when the
+		// semaphore is full rather than dropping (AckAll must guarantee delivery).
 		type result struct {
 			nodeID sharding.NodeID
 			err    error
@@ -157,7 +159,9 @@ func (r *BatcherReplicator) ReplicateBatch(
 		ch := make(chan result, len(peers))
 		for _, peer := range peers {
 			peer := peer
+			r.asyncSem <- struct{}{}
 			go func() {
+				defer func() { <-r.asyncSem }()
 				err := r.sendToReplica(ctx, peer, peerAddrs[peer], shardID, entry)
 				ch <- result{nodeID: peer, err: err}
 			}()

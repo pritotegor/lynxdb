@@ -1,0 +1,5 @@
+# file: backend_server.log
+# format: json
+# exit: nonzero
+# stderr-contains: parse
+| where

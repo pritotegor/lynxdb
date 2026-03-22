@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| enrich avg(duration_ms) as svc_avg by service | let deviation = duration_ms - svc_avg | where deviation > 0 | fields service, duration_ms, svc_avg, deviation | sort -deviation | head 5

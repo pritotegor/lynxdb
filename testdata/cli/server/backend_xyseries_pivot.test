@@ -1,0 +1,2 @@
+# format: json
+FROM backend | stats count by service, level | xyseries service level count | sort service

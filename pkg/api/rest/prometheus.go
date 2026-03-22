@@ -8,6 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/lynxbase/lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/storage"
 )
 
 // PrometheusMetrics holds Prometheus metric collectors for query observability.
@@ -27,6 +28,32 @@ type PrometheusMetrics struct {
 	segmentsScannedTotal    prometheus.Counter
 	querySlowTotal          prometheus.Counter
 	queryErrorsTotal        *prometheus.CounterVec
+
+	// Ingestion metrics.
+	ingestEventsTotal  prometheus.Counter
+	ingestBatchesTotal prometheus.Counter
+	ingestBytesTotal   prometheus.Counter
+	ingestErrorsTotal  prometheus.Counter
+
+	// Compaction metrics.
+	compactionRunsTotal     prometheus.Counter
+	compactionDurationTotal prometheus.Counter
+	compactionInputBytes    prometheus.Counter
+	compactionOutputBytes   prometheus.Counter
+	compactionErrorsTotal   prometheus.Counter
+	compactionQueueDepth    prometheus.Gauge
+
+	// Tiering metrics.
+	tieringUploadsTotal       prometheus.Counter
+	tieringUploadBytesTotal   prometheus.Counter
+	tieringDownloadsTotal     prometheus.Counter
+	tieringDownloadBytesTotal prometheus.Counter
+
+	// Cache metrics.
+	cacheHitsTotal      prometheus.Counter
+	cacheMissesTotal    prometheus.Counter
+	cacheEvictionsTotal prometheus.Counter
+	cacheSizeBytes      prometheus.Gauge
 }
 
 // NewPrometheusMetrics creates and registers all LynxDB Prometheus metrics.
@@ -102,6 +129,86 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		Help: "Total query errors by type.",
 	}, []string{"type"})
 
+	// Ingestion metrics.
+	ingestEvents := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_events_total",
+		Help: "Total events ingested.",
+	})
+	ingestBatches := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_batches_total",
+		Help: "Total ingest batches processed.",
+	})
+	ingestBytes := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_bytes_total",
+		Help: "Total raw bytes ingested.",
+	})
+	ingestErrors := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_errors_total",
+		Help: "Total ingest errors.",
+	})
+
+	// Compaction metrics.
+	compactionRuns := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_compaction_runs_total",
+		Help: "Total compaction runs.",
+	})
+	compactionDuration := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_compaction_duration_seconds_total",
+		Help: "Cumulative compaction duration in seconds.",
+	})
+	compactionInput := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_compaction_input_bytes_total",
+		Help: "Total bytes read by compaction.",
+	})
+	compactionOutput := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_compaction_output_bytes_total",
+		Help: "Total bytes written by compaction.",
+	})
+	compactionErrors := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_compaction_errors_total",
+		Help: "Total compaction errors.",
+	})
+	compactionQueue := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "lynxdb_compaction_queue_depth",
+		Help: "Current number of pending compaction jobs.",
+	})
+
+	// Tiering metrics.
+	tieringUploads := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_tiering_uploads_total",
+		Help: "Total segment uploads to warm/cold tier.",
+	})
+	tieringUploadBytes := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_tiering_upload_bytes_total",
+		Help: "Total bytes uploaded to warm/cold tier.",
+	})
+	tieringDownloads := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_tiering_downloads_total",
+		Help: "Total segment downloads from warm/cold tier.",
+	})
+	tieringDownloadBytes := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_tiering_download_bytes_total",
+		Help: "Total bytes downloaded from warm/cold tier.",
+	})
+
+	// Cache metrics.
+	cacheHits := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_cache_hits_total",
+		Help: "Total query cache hits.",
+	})
+	cacheMisses := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_cache_misses_total",
+		Help: "Total query cache misses.",
+	})
+	cacheEvictions := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_cache_evictions_total",
+		Help: "Total query cache evictions.",
+	})
+	cacheSize := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "lynxdb_cache_size_bytes",
+		Help: "Current query cache size in bytes.",
+	})
+
 	reg.MustRegister(
 		queryDuration,
 		scanDur,
@@ -114,21 +221,57 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		scannedTotal,
 		slowTotal,
 		errorsTotal,
+		ingestEvents,
+		ingestBatches,
+		ingestBytes,
+		ingestErrors,
+		compactionRuns,
+		compactionDuration,
+		compactionInput,
+		compactionOutput,
+		compactionErrors,
+		compactionQueue,
+		tieringUploads,
+		tieringUploadBytes,
+		tieringDownloads,
+		tieringDownloadBytes,
+		cacheHits,
+		cacheMisses,
+		cacheEvictions,
+		cacheSize,
 	)
 
 	return &PrometheusMetrics{
-		registry:                reg,
-		queryDuration:           queryDuration,
-		queryScanDuration:       &scanDur,
-		queryPipelineDuration:   &pipelineDur,
-		queryPeakMemory:         &peakMem,
-		queryRowsScanned:        &rowsScanned,
-		segmentsSkippedBloom:    skippedBloom,
-		segmentsSkippedColStats: skippedColStats,
-		segmentsSkippedTime:     skippedTime,
-		segmentsScannedTotal:    scannedTotal,
-		querySlowTotal:          slowTotal,
-		queryErrorsTotal:        errorsTotal,
+		registry:                  reg,
+		queryDuration:             queryDuration,
+		queryScanDuration:         &scanDur,
+		queryPipelineDuration:     &pipelineDur,
+		queryPeakMemory:           &peakMem,
+		queryRowsScanned:          &rowsScanned,
+		segmentsSkippedBloom:      skippedBloom,
+		segmentsSkippedColStats:   skippedColStats,
+		segmentsSkippedTime:       skippedTime,
+		segmentsScannedTotal:      scannedTotal,
+		querySlowTotal:            slowTotal,
+		queryErrorsTotal:          errorsTotal,
+		ingestEventsTotal:         ingestEvents,
+		ingestBatchesTotal:        ingestBatches,
+		ingestBytesTotal:          ingestBytes,
+		ingestErrorsTotal:         ingestErrors,
+		compactionRunsTotal:       compactionRuns,
+		compactionDurationTotal:   compactionDuration,
+		compactionInputBytes:      compactionInput,
+		compactionOutputBytes:     compactionOutput,
+		compactionErrorsTotal:     compactionErrors,
+		compactionQueueDepth:      compactionQueue,
+		tieringUploadsTotal:       tieringUploads,
+		tieringUploadBytesTotal:   tieringUploadBytes,
+		tieringDownloadsTotal:     tieringDownloads,
+		tieringDownloadBytesTotal: tieringDownloadBytes,
+		cacheHitsTotal:            cacheHits,
+		cacheMissesTotal:          cacheMisses,
+		cacheEvictionsTotal:       cacheEvictions,
+		cacheSizeBytes:            cacheSize,
 	}
 }
 
@@ -197,4 +340,71 @@ func (pm *PrometheusMetrics) RecordQuery(ss *server.SearchStats) {
 // Registry returns the underlying Prometheus registry for testing.
 func (pm *PrometheusMetrics) Registry() *prometheus.Registry {
 	return pm.registry
+}
+
+// RecordStorageMetrics reads from the storage engine metrics and updates
+// Prometheus gauges/counters for ingestion, compaction, tiering, and cache.
+// Called periodically or on-demand (e.g., from /metrics scrape handler).
+func (pm *PrometheusMetrics) RecordStorageMetrics(sm *storage.Metrics) {
+	if sm == nil {
+		return
+	}
+
+	// Ingestion.
+	if v := sm.IngestEvents.Load(); v > 0 {
+		pm.ingestEventsTotal.Add(float64(v))
+	}
+	if v := sm.IngestBatches.Load(); v > 0 {
+		pm.ingestBatchesTotal.Add(float64(v))
+	}
+	if v := sm.IngestBytes.Load(); v > 0 {
+		pm.ingestBytesTotal.Add(float64(v))
+	}
+	if v := sm.IngestErrors.Load(); v > 0 {
+		pm.ingestErrorsTotal.Add(float64(v))
+	}
+
+	// Compaction.
+	if v := sm.CompactionRuns.Load(); v > 0 {
+		pm.compactionRunsTotal.Add(float64(v))
+	}
+	if v := sm.CompactionDurationNs.Load(); v > 0 {
+		pm.compactionDurationTotal.Add(float64(v) / 1e9)
+	}
+	if v := sm.CompactionInputBytes.Load(); v > 0 {
+		pm.compactionInputBytes.Add(float64(v))
+	}
+	if v := sm.CompactionOutputBytes.Load(); v > 0 {
+		pm.compactionOutputBytes.Add(float64(v))
+	}
+	if v := sm.CompactionErrors.Load(); v > 0 {
+		pm.compactionErrorsTotal.Add(float64(v))
+	}
+	pm.compactionQueueDepth.Set(float64(sm.CompactionQueueDepth.Load()))
+
+	// Tiering.
+	if v := sm.TieringUploads.Load(); v > 0 {
+		pm.tieringUploadsTotal.Add(float64(v))
+	}
+	if v := sm.TieringUploadBytes.Load(); v > 0 {
+		pm.tieringUploadBytesTotal.Add(float64(v))
+	}
+	if v := sm.TieringDownloads.Load(); v > 0 {
+		pm.tieringDownloadsTotal.Add(float64(v))
+	}
+	if v := sm.TieringDownloadBytes.Load(); v > 0 {
+		pm.tieringDownloadBytesTotal.Add(float64(v))
+	}
+
+	// Cache.
+	if v := sm.CacheHits.Load(); v > 0 {
+		pm.cacheHitsTotal.Add(float64(v))
+	}
+	if v := sm.CacheMisses.Load(); v > 0 {
+		pm.cacheMissesTotal.Add(float64(v))
+	}
+	if v := sm.CacheEvictions.Load(); v > 0 {
+		pm.cacheEvictionsTotal.Add(float64(v))
+	}
+	pm.cacheSizeBytes.Set(float64(sm.CacheSizeBytes.Load()))
 }

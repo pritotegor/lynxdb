@@ -66,7 +66,9 @@ func checkConfig() checkResult {
 		return checkResult{name: "Config", ok: false, detail: fmt.Sprintf("error: %s", err)}
 	}
 
-	_ = cfg
+	if err := cfg.Validate(); err != nil {
+		return checkResult{name: "Config", ok: false, detail: fmt.Sprintf("validation error: %s", err)}
+	}
 
 	if cfgPath == "" {
 		return checkResult{name: "Config", ok: true, detail: "(defaults, no config file)"}

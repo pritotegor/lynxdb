@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| timechart count span=1h by level

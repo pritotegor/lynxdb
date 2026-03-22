@@ -79,7 +79,7 @@ func fetchManifestFromEndpoints(ctx context.Context, primary, fallback string) (
 
 	manifest, err2 := fetchManifestFrom(ctx, client, fallback)
 	if err2 != nil {
-		return nil, fmt.Errorf("upgrade.FetchManifest: primary=%v, fallback=%v", err, err2)
+		return nil, fmt.Errorf("upgrade.FetchManifest: primary=%w, fallback=%w", err, err2)
 	}
 
 	return manifest, nil

@@ -1,0 +1,2 @@
+# format: json
+FROM backend | stats dc(service) as unique_services, dc(level) as unique_levels

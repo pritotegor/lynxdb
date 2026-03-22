@@ -1,0 +1,3 @@
+# file: frontend_console.log
+# format: json
+| stats count

@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| where amount_cents>0 | stats sum(amount_cents) as total_cents, count as n

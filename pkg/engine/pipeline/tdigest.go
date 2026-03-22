@@ -133,15 +133,6 @@ func (td *TDigest) compress() {
 	td.centroids = merged
 }
 
-// MedianAbsoluteError returns the estimated error for the given quantile.
-func (td *TDigest) MedianAbsoluteError(q float64) float64 {
-	if len(td.centroids) < 2 {
-		return 0
-	}
-	// Very rough estimate of error based on compression parameter.
-	return 1.0 / td.compression * math.Abs(q*(1-q))
-}
-
 // MarshalBinary serializes the t-digest to a byte slice for spill persistence.
 // Layout: [compression:8][count:8][numCentroids:4][centroids: n*(mean:8+count:8)].
 func (td *TDigest) MarshalBinary() []byte {

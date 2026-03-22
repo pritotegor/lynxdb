@@ -2,8 +2,9 @@
 /testdata/db
 *.exe
 
-# Test artifacts
+# Test artifacts (Go test binaries, e.g. pkg.test)
 *.test
+!testdata/**/*.test
 *.out
 coverage.html
 

@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| where service="payment-service" | stats count as total, count(eval(status=500)) as failures, avg(duration_ms) as avg_dur

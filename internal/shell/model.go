@@ -510,7 +510,7 @@ func (m Model) executeFileQueryCmd(query string) tea.Cmd {
 			return queryResultMsg{
 				query:   query,
 				elapsed: elapsed,
-				err:     fmt.Errorf("%s", errMsg),
+				err:     errors.New(errMsg),
 				hints:   hintText,
 			}
 		}
@@ -633,7 +633,7 @@ func pollJobCmd(c *client.Client, jobID, query, hints string, pollCount int, sta
 			return queryResultMsg{
 				query:   query,
 				elapsed: time.Since(start),
-				err:     fmt.Errorf("%s", errMsg),
+				err:     errors.New(errMsg),
 				hints:   hints,
 			}
 		default:

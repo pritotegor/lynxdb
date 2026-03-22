@@ -215,31 +215,20 @@ type JobProgress struct {
 
 // JobResult is the full response from GetJob().
 type JobResult struct {
-	Type           string           `json:"type"`
-	JobID          string           `json:"job_id"`
-	Status         string           `json:"status"`
-	Query          string           `json:"query,omitempty"`
-	From           string           `json:"from,omitempty"`
-	To             string           `json:"to,omitempty"`
-	CreatedAt      string           `json:"created_at,omitempty"`
-	CompletedAt    string           `json:"completed_at,omitempty"`
-	FailedAt       string           `json:"failed_at,omitempty"`
-	ExpiresAt      string           `json:"expires_at,omitempty"`
-	Progress       *JobProgress     `json:"progress,omitempty"`
-	PartialResults *PartialResults  `json:"partial_results,omitempty"`
-	Results        *json.RawMessage `json:"results,omitempty"`
-	Error          *JobError        `json:"error,omitempty"`
-	Meta           Meta             `json:"-"`
-}
-
-// PartialResults holds intermediate results for a running job.
-type PartialResults struct {
-	Type       string                   `json:"type"`
-	Columns    []string                 `json:"columns,omitempty"`
-	Rows       [][]interface{}          `json:"rows,omitempty"`
-	Events     []map[string]interface{} `json:"events,omitempty"`
-	TotalSoFar int                      `json:"total_so_far,omitempty"`
-	Note       string                   `json:"note,omitempty"`
+	Type        string           `json:"type"`
+	JobID       string           `json:"job_id"`
+	Status      string           `json:"status"`
+	Query       string           `json:"query,omitempty"`
+	From        string           `json:"from,omitempty"`
+	To          string           `json:"to,omitempty"`
+	CreatedAt   string           `json:"created_at,omitempty"`
+	CompletedAt string           `json:"completed_at,omitempty"`
+	FailedAt    string           `json:"failed_at,omitempty"`
+	ExpiresAt   string           `json:"expires_at,omitempty"`
+	Progress    *JobProgress     `json:"progress,omitempty"`
+	Results     *json.RawMessage `json:"results,omitempty"`
+	Error       *JobError        `json:"error,omitempty"`
+	Meta        Meta             `json:"-"`
 }
 
 // JobError is the error detail for a failed job.
@@ -274,6 +263,15 @@ func (e *JobError) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// JobListResult is the response from ListJobs().
+type JobListResult struct {
+	Jobs []JobSummary `json:"jobs"`
+	Meta struct {
+		MaxConcurrent int `json:"max_concurrent,omitempty"`
+		Active        int `json:"active,omitempty"`
+	} `json:"meta,omitempty"`
+}
+
 // JobSummary is a brief job entry from ListJobs().
 type JobSummary struct {
 	JobID       string       `json:"job_id"`
@@ -285,15 +283,6 @@ type JobSummary struct {
 	CompletedAt string       `json:"completed_at,omitempty"`
 	ExpiresAt   string       `json:"expires_at,omitempty"`
 	Progress    *JobProgress `json:"progress,omitempty"`
-}
-
-// JobListResult is the response from ListJobs().
-type JobListResult struct {
-	Jobs []JobSummary `json:"jobs"`
-	Meta struct {
-		MaxConcurrent int `json:"max_concurrent,omitempty"`
-		Active        int `json:"active,omitempty"`
-	} `json:"meta,omitempty"`
 }
 
 // ExplainResult is the response from Explain().
@@ -338,18 +327,10 @@ type ExplainAccel struct {
 
 // IngestResult is the response from Ingest().
 type IngestResult struct {
-	Accepted  int           `json:"accepted"`
-	Failed    int           `json:"failed"`
-	Truncated bool          `json:"truncated,omitempty"`
-	Warning   string        `json:"warning,omitempty"`
-	Errors    []IngestError `json:"errors,omitempty"`
-}
-
-// IngestError is a per-event error from partial ingest.
-type IngestError struct {
-	Index   int    `json:"index"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Accepted  int    `json:"accepted"`
+	Failed    int    `json:"failed"`
+	Truncated bool   `json:"truncated,omitempty"`
+	Warning   string `json:"warning,omitempty"`
 }
 
 // IngestOpts configures IngestRaw() and IngestNDJSON().
@@ -544,20 +525,19 @@ type StreamMeta struct {
 
 // View is a materialized view summary.
 type View struct {
-	Name            string            `json:"name"`
-	Kind            string            `json:"kind"`
-	Query           string            `json:"query"`
-	Retention       string            `json:"retention,omitempty"`
-	Status          string            `json:"status"`
-	Version         int               `json:"version,omitempty"`
-	Rows            int64             `json:"rows,omitempty"`
-	Segments        int               `json:"segments,omitempty"`
-	StorageBytes    int64             `json:"storage_bytes,omitempty"`
-	LagMS           *int64            `json:"lag_ms,omitempty"`
-	Backfill        *BackfillProgress `json:"backfill,omitempty"`
-	PreviousVersion *ViewVersion      `json:"previous_version,omitempty"`
-	CreatedAt       string            `json:"created_at,omitempty"`
-	LastEvent       *string           `json:"last_event,omitempty"`
+	Name         string            `json:"name"`
+	Kind         string            `json:"kind"`
+	Query        string            `json:"query"`
+	Retention    string            `json:"retention,omitempty"`
+	Status       string            `json:"status"`
+	Version      int               `json:"version,omitempty"`
+	Rows         int64             `json:"rows,omitempty"`
+	Segments     int               `json:"segments,omitempty"`
+	StorageBytes int64             `json:"storage_bytes,omitempty"`
+	LagMS        *int64            `json:"lag_ms,omitempty"`
+	Backfill     *BackfillProgress `json:"backfill,omitempty"`
+	CreatedAt    string            `json:"created_at,omitempty"`
+	LastEvent    *string           `json:"last_event,omitempty"`
 }
 
 // BackfillProgress tracks MV backfill.
@@ -570,19 +550,12 @@ type BackfillProgress struct {
 	ElapsedMS       float64 `json:"elapsed_ms"`
 }
 
-// ViewVersion represents a previous MV version.
-type ViewVersion struct {
-	Version int    `json:"version"`
-	Status  string `json:"status"`
-}
-
 // ViewDetail extends View with schema info.
 type ViewDetail struct {
 	View
 	Columns      []ViewColumn `json:"columns,omitempty"`
 	GroupBy      []string     `json:"group_by,omitempty"`
 	Aggregations []string     `json:"aggregations,omitempty"`
-	Stats        *ViewStats   `json:"stats,omitempty"`
 	SourceView   *string      `json:"source_view,omitempty"`
 }
 
@@ -593,19 +566,6 @@ type ViewColumn struct {
 	Type        interface{} `json:"type"`
 	Encoding    string      `json:"encoding,omitempty"`
 	DerivedFrom []string    `json:"derived_from,omitempty"`
-}
-
-// ViewStats holds MV storage statistics.
-type ViewStats struct {
-	Rows                 int64   `json:"rows"`
-	Segments             int     `json:"segments"`
-	SegmentsPendingMerge int     `json:"segments_pending_merge,omitempty"`
-	StorageBytes         int64   `json:"storage_bytes"`
-	CompressionRatio     float64 `json:"compression_ratio,omitempty"`
-	LagMS                int64   `json:"lag_ms,omitempty"`
-	IngestRate           float64 `json:"ingest_rate,omitempty"`
-	OldestEvent          string  `json:"oldest_event,omitempty"`
-	NewestEvent          string  `json:"newest_event,omitempty"`
 }
 
 // ViewInput is the request body for creating a view.

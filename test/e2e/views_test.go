@@ -58,9 +58,6 @@ func TestE2E_Views_CRUD(t *testing.T) {
 		t.Fatalf("PatchView: %v", err)
 	}
 	if patched.Retention != "720h" {
-		// BUG: PatchView returns empty retention instead of "720h".
-		// The server may not be persisting or returning the patched retention field.
-		// The application code must be fixed — do not weaken this assertion.
 		t.Errorf("PatchView retention: got %q, want %q", patched.Retention, "720h")
 	}
 

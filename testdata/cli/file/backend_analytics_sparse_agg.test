@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| stats avg(amount_cents) as avg_amount, count(amount_cents) as has_amount, count as total | let coverage_pct = round(has_amount * 100 / total, 1)

@@ -1,0 +1,3 @@
+# file: nginx_access.log
+# format: json
+| stats count

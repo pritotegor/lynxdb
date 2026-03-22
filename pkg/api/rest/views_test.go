@@ -52,6 +52,9 @@ func TestViews_PatchRetention(t *testing.T) {
 	if data["updated"] != true {
 		t.Fatal("expected updated=true")
 	}
+	if got := data["retention"]; got != "720h" {
+		t.Errorf("retention in response: got %q, want %q", got, "720h")
+	}
 }
 
 func TestViews_PatchNotFound(t *testing.T) {

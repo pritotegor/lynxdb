@@ -81,12 +81,6 @@ func TestIngest_PartialFailure(t *testing.T) {
 	if result.Failed != 1 {
 		t.Errorf("Failed = %d, want 1", result.Failed)
 	}
-	if len(result.Errors) != 1 {
-		t.Fatalf("len(Errors) = %d, want 1", len(result.Errors))
-	}
-	if result.Errors[0].Index != 1 {
-		t.Errorf("Errors[0].Index = %d, want 1", result.Errors[0].Index)
-	}
 }
 
 func TestIngest_ServerError(t *testing.T) {

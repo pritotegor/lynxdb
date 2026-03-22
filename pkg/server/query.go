@@ -276,7 +276,7 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	}
 
 	// Check cache.
-	if cached, cacheErr := e.cache.Get(context.Background(), cacheKey); cacheErr != nil {
+	if cached, cacheErr := e.cache.Get(ctx, cacheKey); cacheErr != nil {
 		logger.Debug("cache get failed", "error", cacheErr)
 	} else if cached != nil {
 		e.metrics.QueryCacheHits.Add(1)
@@ -320,7 +320,7 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 			}
 			job.complete(JobStatusDone)
 			job.mu.Unlock()
-			if err := e.cache.Put(context.Background(), cacheKey, resultRowsToCachedResult(rows)); err != nil {
+			if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(rows)); err != nil {
 				logger.Debug("cache put failed", "error", err)
 			}
 
@@ -541,7 +541,7 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	}
 
 	// Store in cache (non-fatal; log failures for observability).
-	if err := e.cache.Put(context.Background(), cacheKey, resultRowsToCachedResult(qr.rows)); err != nil {
+	if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(qr.rows)); err != nil {
 		logger.Debug("cache put failed", "error", err)
 	}
 }

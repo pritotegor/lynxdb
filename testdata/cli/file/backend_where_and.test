@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| where status>=400 AND level="WARN" | stats count

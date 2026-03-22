@@ -1,0 +1,3 @@
+# file: audit_transactions.log
+# format: json
+| search "status=failed" | stats count

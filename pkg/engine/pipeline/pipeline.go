@@ -245,32 +245,6 @@ func BuildProgramWithGovernor(ctx context.Context, prog *spl2.Program, store Ind
 	}, nil
 }
 
-// BuildProgramWithStats is like BuildProgram but wraps each pipeline operator
-// with InstrumentedIterator to collect per-stage row counts and timing.
-// After CollectAll completes, call CollectStageStats on the returned iterator
-// to extract the pipeline breakdown.
-func BuildProgramWithStats(ctx context.Context, prog *spl2.Program, store IndexStore, batchSize int) (Iterator, error) {
-	if batchSize <= 0 {
-		batchSize = DefaultBatchSize
-	}
-
-	qc := &queryContext{
-		ctx:        ctx,
-		store:      store,
-		datasets:   make(map[string][]map[string]event.Value),
-		batchSize:  batchSize,
-		progCache:  vm.NewProgramCache(),
-		instrument: true,
-	}
-
-	// Materialize CTEs using DAG-based execution plan.
-	if err := qc.materializeCTEs(ctx, prog.Datasets); err != nil {
-		return nil, err
-	}
-
-	return qc.buildQuery(ctx, prog.Main)
-}
-
 // buildQuery builds a pipeline for a single Query, resolving variable sources from CTEs.
 func (qc *queryContext) buildQuery(ctx context.Context, query *spl2.Query) (Iterator, error) {
 	var iter Iterator
@@ -462,71 +436,6 @@ func commandStageName(cmd spl2.Command) string {
 	default:
 		return "Unknown"
 	}
-}
-
-// BuildProgramWithViews is like BuildProgram but includes ViewResolver and ViewManager.
-func BuildProgramWithViews(ctx context.Context, prog *spl2.Program, store IndexStore, resolver ViewResolver, mgr ViewManager, batchSize int) (Iterator, error) {
-	return buildProgramWithViews(ctx, prog, store, resolver, mgr, batchSize, false)
-}
-
-// BuildProgramWithViewsAndStats is like BuildProgramWithViews but wraps each
-// pipeline operator with InstrumentedIterator to collect per-stage row counts
-// and timing. After CollectAll completes, call CollectStageStats on the returned
-// iterator to extract the pipeline breakdown and MatchedRows.
-func BuildProgramWithViewsAndStats(ctx context.Context, prog *spl2.Program, store IndexStore, resolver ViewResolver, mgr ViewManager, batchSize int) (Iterator, error) {
-	return buildProgramWithViews(ctx, prog, store, resolver, mgr, batchSize, true)
-}
-
-// BuildProgramWithViewsStatsAndProfile is like BuildProgramWithViewsAndStats but
-// also sets the profile level on the query context, enabling trace-level VM
-// profiling on FilterIterator and EvalIterator when profileLevel == "trace".
-func BuildProgramWithViewsStatsAndProfile(ctx context.Context, prog *spl2.Program, store IndexStore, resolver ViewResolver, mgr ViewManager, batchSize int, profileLevel string) (Iterator, error) {
-	return buildProgramWithViewsOpts(ctx, prog, store, resolver, mgr, batchSize, true, profileLevel)
-}
-
-func buildProgramWithViews(ctx context.Context, prog *spl2.Program, store IndexStore, resolver ViewResolver, mgr ViewManager, batchSize int, instrument bool) (Iterator, error) {
-	return buildProgramWithViewsOpts(ctx, prog, store, resolver, mgr, batchSize, instrument, "")
-}
-
-func buildProgramWithViewsOpts(ctx context.Context, prog *spl2.Program, store IndexStore, resolver ViewResolver, mgr ViewManager, batchSize int, instrument bool, profileLevel string) (Iterator, error) {
-	if batchSize <= 0 {
-		batchSize = DefaultBatchSize
-	}
-
-	qc := &queryContext{
-		ctx:          ctx,
-		store:        store,
-		datasets:     make(map[string][]map[string]event.Value),
-		batchSize:    batchSize,
-		viewResolver: resolver,
-		viewManager:  mgr,
-		progCache:    vm.NewProgramCache(),
-		instrument:   instrument,
-		profileLevel: profileLevel,
-	}
-
-	// Extract optimizer annotations.
-	if prog.Main != nil && prog.Main.Annotations != nil {
-		if ann, ok := prog.Main.Annotations["joinStrategy"]; ok {
-			// The annotation is *optimizer.JoinAnnotation which has a Strategy field.
-			// Use reflection-free approach via fmt.
-			if ja, ok := ann.(interface{ GetStrategy() string }); ok {
-				qc.joinStrategy = ja.GetStrategy()
-			}
-		}
-		if ann, ok := prog.Main.Annotations["appendOrdering"]; ok {
-			if s, ok := ann.(string); ok {
-				qc.appendOrdering = s
-			}
-		}
-	}
-
-	// Materialize CTEs using DAG-based execution plan.
-	if err := qc.materializeCTEs(ctx, prog.Datasets); err != nil {
-		return nil, err
-	}
-
-	return qc.buildQuery(ctx, prog.Main)
 }
 
 // BuildFromSource builds a pipeline from the given source iterator and query

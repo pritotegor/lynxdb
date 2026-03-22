@@ -1,0 +1,2 @@
+# format: json
+FROM backend | sort timestamp | tail 3 | fields level, service, status

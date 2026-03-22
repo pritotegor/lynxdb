@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| tail 3 | fields level, service, duration_ms | sort duration_ms

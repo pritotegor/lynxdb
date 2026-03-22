@@ -1,0 +1,2 @@
+# format: json
+FROM frontend | stats count

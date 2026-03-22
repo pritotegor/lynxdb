@@ -1,0 +1,2 @@
+# format: json
+FROM backend | timechart count span=1h
