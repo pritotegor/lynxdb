@@ -301,14 +301,23 @@ type SearchProgress struct {
 	ElapsedMS            float64     `json:"elapsed_ms"`
 }
 
+// PreviewSnapshot holds a point-in-time sample of materialized rows for
+// progressive display while a query is still running.
+type PreviewSnapshot struct {
+	Version int64
+	Total   int64
+	Rows    []map[string]interface{}
+}
+
 // SearchJob holds the state and results of a search job.
 type SearchJob struct {
-	ID         string                         `json:"id"` // "qry_" + 8 hex bytes
-	Query      string                         `json:"query"`
-	CreatedAt  time.Time                      `json:"created_at"`
-	DoneAt     time.Time                      `json:"-"`
-	ResultType ResultType                     `json:"-"`
-	Progress   atomic.Pointer[SearchProgress] `json:"-"`
+	ID         string                          `json:"id"` // "qry_" + 8 hex bytes
+	Query      string                          `json:"query"`
+	CreatedAt  time.Time                       `json:"created_at"`
+	DoneAt     time.Time                       `json:"-"`
+	ResultType ResultType                      `json:"-"`
+	Progress   atomic.Pointer[SearchProgress]  `json:"-"`
+	Preview    atomic.Pointer[PreviewSnapshot] `json:"-"`
 
 	mu        sync.Mutex       // protects Status, Results, Stats, Error, ErrorCode
 	Status    string           `json:"status"` // JobStatusRunning, JobStatusDone, JobStatusError, JobStatusCanceled

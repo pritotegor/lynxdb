@@ -118,6 +118,12 @@
   transition: width 0.3s ease-out;
 }
 
+.previewHint {
+  color: var(--text-muted);
+  font-style: italic;
+  white-space: nowrap;
+}
+
 /* --- Canceled state --- */
 
 .canceledIcon {

@@ -138,6 +138,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("query.slow_query_threshold_ms", strconv.FormatInt(cfg.Query.SlowQueryThresholdMs, 10), strconv.FormatInt(dflt.Query.SlowQueryThresholdMs, 10), strconv.FormatInt(fileCfg.Query.SlowQueryThresholdMs, 10), "LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS")
 	add("query.max_branch_parallelism", strconv.Itoa(cfg.Query.MaxBranchParallelism), strconv.Itoa(dflt.Query.MaxBranchParallelism), strconv.Itoa(fileCfg.Query.MaxBranchParallelism), "LYNXDB_QUERY_MAX_BRANCH_PARALLELISM")
 	add("query.max_query_length", strconv.Itoa(cfg.Query.MaxQueryLength), strconv.Itoa(dflt.Query.MaxQueryLength), strconv.Itoa(fileCfg.Query.MaxQueryLength), "LYNXDB_QUERY_MAX_QUERY_LENGTH")
+	add("query.preview_size", strconv.Itoa(cfg.Query.PreviewSize), strconv.Itoa(dflt.Query.PreviewSize), strconv.Itoa(fileCfg.Query.PreviewSize), "LYNXDB_QUERY_PREVIEW_SIZE")
 
 	// Ingest.
 	add("ingest.max_body_size", cfg.Ingest.MaxBodySize.String(), dflt.Ingest.MaxBodySize.String(), fileCfg.Ingest.MaxBodySize.String(), "LYNXDB_INGEST_MAX_BODY_SIZE")

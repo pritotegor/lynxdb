@@ -24,7 +24,6 @@ import {
 } from "../api/client";
 import {
   submitHybridQuery,
-  streamQuery,
   subscribeJobProgress,
 } from "../api/streaming";
 import { authHeaders } from "../api/auth";
@@ -127,6 +126,8 @@ const progressData = signal<{ percent: number; scanned: number; total: number; e
 const canceled = signal(false);
 /** Live elapsed milliseconds since query started */
 const elapsedMs = signal(0);
+/** True when result is showing preview rows (not final) */
+const isPreview = signal(false);
 
 /* --- Pagination, view mode, toolbar signals --- */
 const page = signal(1);
@@ -142,6 +143,9 @@ let getEditorView: (() => import("@codemirror/view").EditorView | null) | null =
 
 /** Debounce timer for live explain diagnostics */
 let explainDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Debounce timer for post-query side effects (histogram, explain, fields) */
+let postQueryEffectsTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Timer for copy tooltip auto-hide */
 let copyTooltipTimer: ReturnType<typeof setTimeout> | undefined;
@@ -287,6 +291,23 @@ function runPostQueryEffects(
 }
 
 /**
+ * Debounced wrapper for runPostQueryEffects. Fires 300ms after the last
+ * call so rapid successive queries coalesce histogram/explain/fields requests.
+ */
+function runPostQueryEffectsDebounced(
+  q: string,
+  fromVal: string,
+  toVal: string | undefined,
+  pg: number,
+  sz: number,
+): void {
+  clearTimeout(postQueryEffectsTimer);
+  postQueryEffectsTimer = setTimeout(() => {
+    runPostQueryEffects(q, fromVal, toVal, pg, sz);
+  }, 300);
+}
+
+/**
  * Run a query with adaptive sync/streaming execution.
  *
  * Flow: submit hybrid query (200ms sync wait). If fast, instant swap. If slow,
@@ -334,9 +355,6 @@ function runQueryAndRefresh(
   // Start elapsed timer
   startElapsedTimer();
 
-  // Detect result type for choosing streaming vs progress path
-  const resultType = detectResultType(q);
-
   submitHybridQuery(q, fromVal, toVal, currentSize, currentOffset, controller.signal)
     .then((hybrid) => {
       // Discard stale responses
@@ -362,176 +380,115 @@ function runQueryAndRefresh(
         stats.value = null;
       });
 
-      if (resultType === "events") {
-        // --- NDJSON streaming for search queries ---
-        streaming.value = true;
-        streamingCount.value = 0;
-        const rows: Record<string, unknown>[] = [];
-        let streamMeta: { total?: number; scanned?: number; took_ms?: number } = {};
-        let firstRowSeen = false;
+      // --- SSE progress for both event and aggregate queries ---
+      // Reuses the existing async job (same pipeline as the hybrid query)
+      // instead of starting a second independent scan via streamQuery().
+      loading.value = true;
+      startElapsedTimer();
+      const jobId = hybrid.jobId;
+      if (!jobId) {
+        batch(() => {
+          error.value = "No job ID returned for async query";
+          loading.value = false;
+          queryActive.value = false;
+        });
+        stopElapsedTimer();
+        cleanupActiveQuery();
+        return;
+      }
 
-        streamQuery(q, fromVal, toVal, {
-          onRow(row) {
-            rows.push(row);
-            if (!firstRowSeen) {
-              firstRowSeen = true;
-              // Clear previous results on first actual row — preserves them during 200ms hybrid wait
-              result.value = null;
-            }
-            batch(() => {
-              streamingCount.value = rows.length;
-              result.value = {
-                type: "events",
-                events: rows.slice(0, currentSize),
-                total: rows.length,
-                has_more: false,
-              } satisfies EventsResult;
-            });
-          },
-          onMeta(meta) {
-            streamMeta = meta;
-          },
-          onError(message) {
-            error.value = message;
-          },
-        }, controller.signal, currentSize)
-          .then(() => {
-            if (gen !== queryGeneration) return;
-            batch(() => {
-              result.value = {
-                type: "events",
-                events: rows.slice(0, currentSize),
-                total: streamMeta.total ?? rows.length,
-                has_more: (streamMeta.total ?? rows.length) > currentSize,
-              } satisfies EventsResult;
-              stats.value = {
-                took_ms: streamMeta.took_ms ?? elapsedMs.value,
-                scanned: streamMeta.scanned ?? 0,
-              };
-              streaming.value = false;
-              queryActive.value = false;
-              loading.value = false;
-            });
-            stopElapsedTimer();
-            runPostQueryEffects(q, fromVal, toVal, currentPage, currentSize);
-            cleanupActiveQuery();
-          })
-          .catch((err: unknown) => {
-            if (gen !== queryGeneration) return;
-            if (err instanceof DOMException && err.name === "AbortError") {
-              // Cancel: keep partial rows
-              batch(() => {
-                canceled.value = true;
-                streaming.value = false;
-                queryActive.value = false;
-                loading.value = false;
-              });
-              stopElapsedTimer();
-              cleanupActiveQuery();
-              return;
-            }
-            const message = err instanceof Error ? err.message : "Unknown error";
-            batch(() => {
-              error.value = message;
-              streaming.value = false;
-              queryActive.value = false;
-              loading.value = false;
-            });
-            stopElapsedTimer();
-            cleanupActiveQuery();
-          });
-      } else {
-        // --- SSE progress for aggregation queries ---
-        loading.value = true;
-        const jobId = hybrid.jobId;
-        if (!jobId) {
+      const unsubscribe = subscribeJobProgress(
+        jobId,
+        (p) => {
+          // onProgress
+          if (gen !== queryGeneration) return;
           batch(() => {
-            error.value = "No job ID returned for async query";
-            loading.value = false;
-            queryActive.value = false;
-          });
-          stopElapsedTimer();
-          cleanupActiveQuery();
-          return;
-        }
-
-        const unsubscribe = subscribeJobProgress(
-          jobId,
-          (p) => {
-            // onProgress
-            if (gen !== queryGeneration) return;
             progressData.value = {
               percent: p.percent,
               scanned: p.scanned,
               total: p.segments_total ?? 0,
               elapsedMs: p.elapsed_ms,
             };
-          },
-          (data: unknown) => {
-            // onComplete -- SSE complete event is now { data: QueryResult, meta: DetailedStats }
-            if (gen !== queryGeneration) return;
-            const payload = data as { data: QueryResult; meta?: Record<string, unknown> } | QueryResult;
-            // Support both old shape (bare QueryResult) and new shape ({ data, meta })
-            const queryResult: QueryResult = (payload && typeof payload === "object" && "data" in payload && "meta" in payload)
-              ? (payload as { data: QueryResult }).data
-              : (payload as QueryResult);
-            const metaStats = (payload && typeof payload === "object" && "meta" in payload)
-              ? (payload as { meta: Record<string, unknown> }).meta
-              : undefined;
 
-            batch(() => {
-              result.value = queryResult ?? null;
-              stats.value = {
-                took_ms: elapsedMs.value,
-                scanned: (metaStats?.rows_scanned as number) ?? 0,
-                query_id: jobId,
-                stats: metaStats
-                  ? {
-                      segments_total:      (metaStats.segments_total as number) ?? 0,
-                      segments_scanned:    (metaStats.segments_scanned as number) ?? 0,
-                      segments_skipped_bf: (metaStats.segments_skipped_bf as number) ?? 0,
-                      rows_scanned:        (metaStats.rows_scanned as number) ?? 0,
-                      took_ms:             elapsedMs.value,
-                    }
-                  : undefined,
-              };
-              progressData.value = null;
-              queryActive.value = false;
-              loading.value = false;
-            });
-            stopElapsedTimer();
-            runPostQueryEffects(q, fromVal, toVal, currentPage, currentSize);
-            cleanupActiveQuery();
-          },
-          (message: string) => {
-            // onFailed
-            if (gen !== queryGeneration) return;
-            batch(() => {
-              error.value = message;
-              progressData.value = null;
-              queryActive.value = false;
-              loading.value = false;
-            });
-            stopElapsedTimer();
-            cleanupActiveQuery();
-          },
-          () => {
-            // onCanceled
-            if (gen !== queryGeneration) return;
-            batch(() => {
-              canceled.value = true;
-              result.value = null;
-              progressData.value = null;
-              queryActive.value = false;
-              loading.value = false;
-            });
-            stopElapsedTimer();
-            cleanupActiveQuery();
-          },
-        );
+            // Render preview rows while query is running
+            if (p.preview && p.preview.length > 0) {
+              result.value = {
+                type: "events",
+                events: p.preview,
+                total: p.preview.length,
+                has_more: true,
+              } satisfies EventsResult;
+              isPreview.value = true;
+            }
+          });
+        },
+        (data: unknown) => {
+          // onComplete — SSE complete event is { data: QueryResult, meta: { took_ms, scanned, stats } }
+          if (gen !== queryGeneration) return;
+          const payload = data as { data: QueryResult; meta?: Record<string, unknown> } | QueryResult;
+          const queryResult: QueryResult = (payload && typeof payload === "object" && "data" in payload && "meta" in payload)
+            ? (payload as { data: QueryResult }).data
+            : (payload as QueryResult);
+          const metaStats = (payload && typeof payload === "object" && "meta" in payload)
+            ? (payload as { meta: Record<string, unknown> }).meta
+            : undefined;
+          const detailedStats = metaStats?.stats as Record<string, unknown> | undefined;
 
-        jobProgressCleanup = unsubscribe;
-      }
+          batch(() => {
+            result.value = queryResult ?? null;
+            stats.value = {
+              took_ms: (metaStats?.took_ms as number) ?? elapsedMs.value,
+              scanned: (metaStats?.scanned as number) ?? 0,
+              query_id: jobId,
+              stats: detailedStats
+                ? {
+                    segments_total:      detailedStats.segments_total as number ?? 0,
+                    segments_scanned:    detailedStats.segments_scanned as number ?? 0,
+                    segments_skipped_bf: detailedStats.segments_skipped_bloom as number ?? 0,
+                    rows_scanned:        detailedStats.rows_scanned as number ?? 0,
+                    took_ms:             (metaStats?.took_ms as number) ?? elapsedMs.value,
+                  }
+                : undefined,
+            };
+            progressData.value = null;
+            queryActive.value = false;
+            loading.value = false;
+            isPreview.value = false;
+          });
+           stopElapsedTimer();
+          runPostQueryEffectsDebounced(q, fromVal, toVal, currentPage, currentSize);
+          cleanupActiveQuery();
+        },
+        (message: string) => {
+          // onFailed
+          if (gen !== queryGeneration) return;
+          batch(() => {
+            error.value = message;
+            progressData.value = null;
+            queryActive.value = false;
+            loading.value = false;
+            isPreview.value = false;
+          });
+          stopElapsedTimer();
+          cleanupActiveQuery();
+        },
+        () => {
+          // onCanceled
+          if (gen !== queryGeneration) return;
+          batch(() => {
+            canceled.value = true;
+            result.value = null;
+            progressData.value = null;
+            queryActive.value = false;
+            loading.value = false;
+            isPreview.value = false;
+          });
+          stopElapsedTimer();
+          cleanupActiveQuery();
+        },
+      );
+
+      jobProgressCleanup = unsubscribe;
     })
     .catch((err: unknown) => {
       if (gen !== queryGeneration) return;
@@ -1105,6 +1062,7 @@ export function SearchView(_props: Props) {
             progress={progressData.value}
             canceled={canceled.value}
             elapsedMs={elapsedMs.value}
+            isPreview={isPreview.value}
             onExplainToggle={handleExplainToggle}
             explainAvailable={!!(explainResult.value?.is_valid && explainResult.value?.parsed)}
             tailReconnecting={tailReconnecting.value}

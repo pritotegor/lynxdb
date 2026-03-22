@@ -24,6 +24,8 @@ interface QueryStatsProps {
   canceled?: boolean;
   /** Elapsed milliseconds since query started (ticking live) */
   elapsedMs?: number;
+  /** True when result is showing preview rows (not final) */
+  isPreview?: boolean;
 
   // Phase 6: Detailed stats & explain
   /** Callback when user clicks the Explain button */
@@ -107,6 +109,7 @@ export function QueryStatsBar({
   progress,
   canceled,
   elapsedMs,
+  isPreview,
   onExplainToggle,
   explainAvailable,
   tailReconnecting,
@@ -191,6 +194,7 @@ export function QueryStatsBar({
           <div class={styles.progressFill} style={{ width: `${progress.percent}%` }} />
         </div>
         {`${formatCount(progress.scanned)}/${formatCount(progress.total)} segments (${Math.round(progress.percent)}%) \u2014 ${formatElapsed(elapsedMs ?? progress.elapsedMs)}`}
+        {isPreview && <span class={styles.previewHint}>Showing partial results\u2026</span>}
       </div>
     );
   }

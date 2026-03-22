@@ -342,7 +342,33 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	cpuBefore := stats.TakeCPUSnapshot()
 	scanStart := time.Now()
 
-	qr, err := e.runQueryPipeline(ctx, prog, hints, params, aggSpec, ann, onProgress, scanStart)
+	// Preview callback: stores a sample of materialized rows on the job for
+	// progressive SSE delivery while the pipeline is still running.
+	previewSize := e.queryCfg.PreviewSize
+	if previewSize == 0 {
+		previewSize = 50
+	}
+	var previewSeq int64
+	var onPreview func(totalRows int, rows []map[string]event.Value)
+	if previewSize > 0 && job.ResultType != ResultTypeAggregate && job.ResultType != ResultTypeTimechart {
+		var lastPreview time.Time
+		onPreview = func(total int, rows []map[string]event.Value) {
+			now := time.Now()
+			if now.Sub(lastPreview) < time.Second && total > 0 {
+				return // throttle: at most 1/sec after first batch
+			}
+			lastPreview = now
+			sample := sampleRowsForPreview(rows, previewSize)
+			ver := atomic.AddInt64(&previewSeq, 1)
+			job.Preview.Store(&PreviewSnapshot{
+				Version: ver,
+				Total:   int64(total),
+				Rows:    sample,
+			})
+		}
+	}
+
+	qr, err := e.runQueryPipeline(ctx, prog, hints, params, aggSpec, ann, onProgress, onPreview, scanStart)
 	if err != nil {
 		errCode := classifyQueryError(err)
 		job.mu.Lock()
@@ -579,6 +605,24 @@ func extractAnnotations(prog *spl2.Program) queryAnnotations {
 	return ann
 }
 
+// sampleRowsForPreview returns the last maxN rows from the accumulated slice,
+// converted to JSON-compatible maps. Used for progressive preview in SSE events.
+func sampleRowsForPreview(rows []map[string]event.Value, maxN int) []map[string]interface{} {
+	start := 0
+	if len(rows) > maxN {
+		start = len(rows) - maxN
+	}
+	out := make([]map[string]interface{}, 0, len(rows)-start)
+	for i := start; i < len(rows); i++ {
+		row := make(map[string]interface{}, len(rows[i]))
+		for k, v := range rows[i] {
+			row[k] = v.Interface()
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 // queryPipelineResult holds the output of runQueryPipeline.
 type queryPipelineResult struct {
 	rows                 []spl2.ResultRow
@@ -607,6 +651,7 @@ func (e *Engine) runQueryPipeline(
 	aggSpec *enginepipeline.PartialAggSpec,
 	ann queryAnnotations,
 	onProgress func(*SearchProgress),
+	onPreview func(totalRows int, rows []map[string]event.Value),
 	scanStart time.Time,
 ) (*queryPipelineResult, error) {
 	// Distributed query path: if a cluster coordinator is configured,
@@ -628,7 +673,7 @@ func (e *Engine) runQueryPipeline(
 		}
 	}
 
-	return e.runStandardPipeline(ctx, prog, hints, params, onProgress, scanStart)
+	return e.runStandardPipeline(ctx, prog, hints, params, onProgress, onPreview, scanStart)
 }
 
 // runDistributedPipeline delegates query execution to the cluster coordinator
@@ -816,6 +861,7 @@ func (e *Engine) runStandardPipeline(
 	hints *spl2.QueryHints,
 	params QueryParams,
 	onProgress func(*SearchProgress),
+	onPreview func(totalRows int, rows []map[string]event.Value),
 	scanStart time.Time,
 ) (*queryPipelineResult, error) {
 	// Resolve glob patterns against the source registry before segment filtering.
@@ -841,7 +887,7 @@ func (e *Engine) runStandardPipeline(
 	}
 
 	if useStreaming {
-		qr, err := e.runStreamingPipeline(ctx, prog, hints, params, onProgress, scanStart)
+		qr, err := e.runStreamingPipeline(ctx, prog, hints, params, onProgress, onPreview, scanStart)
 		if err == nil && len(scopeWarnings) > 0 {
 			qr.warnings = append(scopeWarnings, qr.warnings...)
 		}
@@ -922,6 +968,7 @@ func (e *Engine) runStreamingPipeline(
 	hints *spl2.QueryHints,
 	params QueryParams,
 	onProgress func(*SearchProgress),
+	onPreview func(totalRows int, rows []map[string]event.Value),
 	scanStart time.Time,
 ) (*queryPipelineResult, error) {
 	qr := &queryPipelineResult{}
@@ -1038,7 +1085,17 @@ func (e *Engine) runStreamingPipeline(
 		return nil, pipeErr
 	}
 	streamIter := streamBuildResult.Iterator
-	pipeRows, collectErr := enginepipeline.CollectAll(ctx, streamIter)
+
+	// Wire preview callback into CollectAll if provided.
+	var collectOpts []enginepipeline.CollectOptions
+	if onPreview != nil {
+		collectOpts = append(collectOpts, enginepipeline.CollectOptions{
+			OnBatch: func(total int, rows []map[string]event.Value) {
+				onPreview(total, rows)
+			},
+		})
+	}
+	pipeRows, collectErr := enginepipeline.CollectAll(ctx, streamIter, collectOpts...)
 	if collectErr != nil {
 		return nil, collectErr
 	}

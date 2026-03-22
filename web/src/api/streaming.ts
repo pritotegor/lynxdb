@@ -39,6 +39,11 @@ export interface ProgressData {
   /** Total number of segments to scan. Present in backend SearchProgress struct;
       used by Plan 02's onProgress handler to compute the 'total' for progress bar display. */
   segments_total?: number;
+  /** Sample of matched rows emitted during pipeline execution. Present when
+      new preview data is available since last progress event. */
+  preview?: Record<string, unknown>[];
+  /** Monotonically increasing counter. Frontend skips re-render if unchanged. */
+  preview_version?: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -1138,8 +1138,17 @@ func CheckVectorizedFilter(iter Iterator) bool {
 	}
 }
 
+// CollectOptions configures optional hooks during row collection.
+type CollectOptions struct {
+	// OnBatch, when non-nil, is called after each iterator batch is
+	// accumulated. totalRows is the running count of collected rows.
+	// rows is the accumulated slice — safe to read synchronously since
+	// it is not mutated until the next iter.Next call.
+	OnBatch func(totalRows int, rows []map[string]event.Value)
+}
+
 // CollectAll runs a pipeline to completion and returns all result rows.
-func CollectAll(ctx context.Context, iter Iterator) ([]map[string]event.Value, error) {
+func CollectAll(ctx context.Context, iter Iterator, opts ...CollectOptions) ([]map[string]event.Value, error) {
 	if err := iter.Init(ctx); err != nil {
 		return nil, err
 	}
@@ -1156,6 +1165,9 @@ func CollectAll(ctx context.Context, iter Iterator) ([]map[string]event.Value, e
 		}
 		for i := 0; i < batch.Len; i++ {
 			rows = append(rows, batch.Row(i))
+		}
+		if len(opts) > 0 && opts[0].OnBatch != nil {
+			opts[0].OnBatch(len(rows), rows)
 		}
 	}
 

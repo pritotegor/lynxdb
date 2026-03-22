@@ -199,6 +199,11 @@ type QueryConfig struct {
 	// Requests exceeding this limit are rejected with HTTP 400.
 	// Default: 1048576 (1MB). Set to 0 to disable the limit.
 	MaxQueryLength int `yaml:"max_query_length" json:"max_query_length"`
+
+	// PreviewSize is the maximum number of rows included in SSE progress
+	// preview events while a query is running. 0 disables preview.
+	// Default: 50.
+	PreviewSize int `yaml:"preview_size" json:"preview_size"`
 }
 
 // IngestConfig holds ingestion parameters.
@@ -378,6 +383,7 @@ func DefaultConfig() *Config {
 			BitmapSelectivityThreshold: 0.9,
 			SlowQueryThresholdMs:       1000,    // 1 second
 			MaxQueryLength:             1 << 20, // 1 MB
+			PreviewSize:                50,
 		},
 
 		Ingest: IngestConfig{

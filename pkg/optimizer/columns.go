@@ -332,6 +332,10 @@ func commandAccessedFields(cmd spl2.Command, cols map[string]bool) {
 		for _, sf := range c.Fields {
 			cols[sf.Name] = true
 		}
+	case *spl2.TopNCommand:
+		for _, sf := range c.Fields {
+			cols[sf.Name] = true
+		}
 	case *spl2.FieldsCommand:
 		if spl2.FieldListHasGlob(c.Fields) {
 			cols["*"] = true // glob patterns — all columns needed

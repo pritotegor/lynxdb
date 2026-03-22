@@ -91,6 +91,10 @@ func (t *TopNIterator) buildTopN(ctx context.Context) error {
 	}
 	heap.Init(t.h)
 
+	// Reusable scratch map avoids per-row allocation in batch.Row(i).
+	// Only rows that enter the heap get a stable copy via cloneRow.
+	scratch := make(map[string]event.Value, 16)
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -103,7 +107,7 @@ func (t *TopNIterator) buildTopN(ctx context.Context) error {
 			break
 		}
 		for i := 0; i < batch.Len; i++ {
-			row := batch.Row(i)
+			batch.RowInto(i, scratch) // fills scratch, reuses map — zero alloc
 			if t.h.Len() < t.limit {
 				// Growing the heap: track memory for the new row.
 				if growErr := t.acct.Grow(estimatedRowBytes); growErr != nil {
@@ -111,13 +115,13 @@ func (t *TopNIterator) buildTopN(ctx context.Context) error {
 					// Continue without tracking rather than failing the query.
 					break
 				}
-				heap.Push(t.h, row)
+				heap.Push(t.h, cloneRow(scratch)) // copy only when keeping
 			} else if t.h.Len() > 0 {
 				// Compare with the "worst" element (heap root).
 				// The heap keeps the worst element at top (min-heap by reverse sort order).
 				// Replacement is memory-neutral (swap one row for another).
-				if t.isBetter(row, t.h.rows[0]) {
-					t.h.rows[0] = row
+				if t.isBetter(scratch, t.h.rows[0]) {
+					t.h.rows[0] = cloneRow(scratch)
 					heap.Fix(t.h, 0)
 				}
 			}

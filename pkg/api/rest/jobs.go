@@ -166,6 +166,8 @@ func (s *Server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	var lastPreviewVersion int64
+
 	for {
 		snap := job.Snapshot()
 
@@ -194,6 +196,11 @@ func (s *Server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 					progress["eta_ms"] = p.ElapsedMS / pct * (100 - pct)
 				}
 			}
+			if snap := job.Preview.Load(); snap != nil && snap.Version > lastPreviewVersion {
+				progress["preview"] = snap.Rows
+				progress["preview_version"] = snap.Version
+				lastPreviewVersion = snap.Version
+			}
 			writeSSE("progress", progress)
 
 		case server.JobStatusDone:
@@ -208,11 +215,19 @@ func (s *Server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 			default:
 				data = buildEventsResponse(snap.Results, defaultLimit, 0)
 			}
-			// Build stats meta for the complete event
+			// Build stats meta for the complete event.
+			// Include took_ms and scanned at the envelope level (matching
+			// the sync response structure from writeSyncResultFromUsecase)
+			// so the frontend can read server-side execution time and row
+			// count without falling back to client-side elapsedMs.
 			statsEnvelope := searchStatsToMeta(&snap.Stats)
 			writeSSE("complete", map[string]interface{}{
 				"data": data,
-				"meta": statsEnvelope,
+				"meta": map[string]interface{}{
+					"took_ms": snap.Stats.ElapsedMS,
+					"scanned": snap.Stats.RowsScanned,
+					"stats":   statsEnvelope,
+				},
 			})
 
 			return

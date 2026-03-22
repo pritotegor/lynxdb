@@ -121,7 +121,7 @@ func (a *engineShardQueryAdapter) SubmitShardQuery(ctx context.Context, params q
 	qp := QueryParams{}
 	noop := func(*SearchProgress) {}
 	result, err := a.engine.runQueryPipeline(
-		ctx, prog, hints, qp, nil, queryAnnotations{}, noop, time.Now())
+		ctx, prog, hints, qp, nil, queryAnnotations{}, noop, nil, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardQuery: %w", err)
 	}
