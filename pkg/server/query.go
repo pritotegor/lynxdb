@@ -47,6 +47,8 @@ func DetectResultType(prog *spl2.Program) ResultType {
 			return ResultTypeEvents
 		case *spl2.MaterializeCommand:
 			return ResultTypeViewCreated
+		case *spl2.GlimpseCommand:
+			return ResultTypeGlimpse
 		default:
 			return ResultTypeEvents
 		}

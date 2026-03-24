@@ -341,6 +341,152 @@ func lastCommandWord(s string) string {
 	return ""
 }
 
+// CompletionKind categorizes a completion item for display.
+type CompletionKind int
+
+const (
+	KindCommand CompletionKind = iota
+	KindField
+	KindFunction
+	KindValue
+	KindKeyword
+	KindSlashCmd
+)
+
+// CompletionItem represents a single completion candidate for the popup.
+type CompletionItem struct {
+	Text     string         // the completion text to insert
+	Kind     CompletionKind // category for display
+	FullLine string         // full-line suggestion (for applying)
+}
+
+// kindLabel returns a short label for display in the popup.
+func (k CompletionKind) kindLabel() string {
+	switch k {
+	case KindCommand:
+		return "cmd"
+	case KindField:
+		return "field"
+	case KindFunction:
+		return "fn"
+	case KindValue:
+		return "val"
+	case KindKeyword:
+		return "key"
+	case KindSlashCmd:
+		return "/"
+	default:
+		return ""
+	}
+}
+
+// SuggestAll returns all matching completion items for popup display.
+// Each item includes the candidate text, its kind, and the full-line replacement.
+func (c *Completer) SuggestAll(value string) []CompletionItem {
+	if value == "" {
+		return nil
+	}
+
+	// Slash commands.
+	if strings.HasPrefix(value, "/") {
+		candidates := c.matchPrefix(value, c.slashCmds)
+		return c.buildItems(value, 0, candidates, "", KindSlashCmd)
+	}
+
+	// Field value pattern.
+	if fieldName, partial, valueStart, ok := detectFieldValuePattern(value); ok {
+		if values, found := c.fieldValues[fieldName]; found {
+			candidates := c.matchValuePrefix(partial, values)
+			hasOpenQuote := valueStart > 0 && value[valueStart-1] == '"'
+			suffix := ""
+			if hasOpenQuote {
+				suffix = "\""
+			}
+			return c.buildItems(value, valueStart, candidates, suffix, KindValue)
+		}
+	}
+
+	word := lastWord(value)
+	if word == "" {
+		return nil
+	}
+
+	replaceStart := len(value) - len(word)
+	before := strings.TrimSpace(value[:replaceStart])
+	beforeLower := strings.ToLower(before)
+
+	var items []CompletionItem
+
+	switch {
+	case before == "" || strings.HasSuffix(beforeLower, "|") || strings.HasSuffix(beforeLower, "| "):
+		items = c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.commands), "", KindCommand)
+
+	default:
+		lastCmd := lastCommandWord(beforeLower)
+
+		switch lastCmd {
+		case "stats", "timechart", "eventstats", "streamstats":
+			items = c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.aggFuncs), "", KindFunction)
+			items = append(items, c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.fields), "", KindField)...)
+
+		case "by", "where", "eval", "sort", "table", "fields", "keep", "omit",
+			"dedup", "rename", "top", "rare", "join", "on":
+			items = c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.fields), "", KindField)
+
+		case "from":
+			items = c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.sources), "", KindValue)
+			if len(items) == 0 {
+				items = c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.fields), "", KindField)
+			}
+
+		case "as":
+			// No suggestions while typing an alias.
+
+		default:
+			lowerWord := strings.ToLower(word)
+			for _, pair := range []struct {
+				list []string
+				kind CompletionKind
+			}{
+				{c.commands, KindCommand},
+				{c.aggFuncs, KindFunction},
+				{c.evalFuncs, KindFunction},
+				{c.fields, KindField},
+				{c.keywords, KindKeyword},
+			} {
+				for _, s := range pair.list {
+					if strings.HasPrefix(strings.ToLower(s), lowerWord) && strings.ToLower(s) != lowerWord {
+						full := value[:replaceStart] + s
+						items = append(items, CompletionItem{Text: s, Kind: pair.kind, FullLine: full})
+					}
+				}
+			}
+		}
+	}
+
+	return items
+}
+
+// buildItems constructs CompletionItems from candidates.
+func (c *Completer) buildItems(value string, replaceStart int, candidates []string, suffix string, kind CompletionKind) []CompletionItem {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	prefix := value[:replaceStart]
+	items := make([]CompletionItem, 0, len(candidates))
+
+	for _, cand := range candidates {
+		full := prefix + cand + suffix
+		if full == value {
+			continue
+		}
+		items = append(items, CompletionItem{Text: cand, Kind: kind, FullLine: full})
+	}
+
+	return items
+}
+
 // extractFieldNames collects unique field names from result rows.
 // It samples up to the first 10 rows to avoid scanning large result sets.
 func extractFieldNames(rows []map[string]interface{}) []string {

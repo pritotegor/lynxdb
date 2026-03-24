@@ -50,6 +50,22 @@ func DetectFormat(format Format, rows []map[string]interface{}, theme ...*ui.The
 		t = theme[0]
 	}
 
+	// Detect glimpse output (has __glimpse_result column).
+	if isGlimpseResult(rows) {
+		switch format {
+		case FormatJSON, FormatNDJSON:
+			return &GlimpseJSONFormatter{}
+		case FormatCSV:
+			return &GlimpseCSVFormatter{}
+		default:
+			if !isTTY(os.Stdout) {
+				return &GlimpseJSONFormatter{}
+			}
+
+			return &GlimpseTTYFormatter{}
+		}
+	}
+
 	switch format {
 	case FormatTable:
 		if len(rows) == 1 && len(rows[0]) == 1 {
@@ -91,6 +107,16 @@ func DetectFormat(format Format, rows []map[string]interface{}, theme ...*ui.The
 
 		return &TableFormatter{Theme: t}
 	}
+}
+
+// isGlimpseResult checks if rows contain glimpse output.
+func isGlimpseResult(rows []map[string]interface{}) bool {
+	if len(rows) != 1 {
+		return false
+	}
+	_, ok := rows[0]["__glimpse_result"]
+
+	return ok
 }
 
 // TableFormatter outputs aligned table format using lipgloss/table.
@@ -360,4 +386,106 @@ func formatValue(v interface{}) string {
 	default:
 		return fmt.Sprint(v)
 	}
+}
+
+// GlimpseTTYFormatter prints the pre-rendered ASCII table from _raw for TTY output.
+type GlimpseTTYFormatter struct{}
+
+func (f *GlimpseTTYFormatter) Format(w io.Writer, rows []map[string]interface{}) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	raw, ok := rows[0]["_raw"]
+	if !ok {
+		return nil
+	}
+	fmt.Fprintln(w, formatValue(raw))
+
+	return nil
+}
+
+// GlimpseJSONFormatter outputs the structured glimpse result as JSON.
+type GlimpseJSONFormatter struct{}
+
+func (f *GlimpseJSONFormatter) Format(w io.Writer, rows []map[string]interface{}) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	raw, ok := rows[0]["__glimpse_result"]
+	if !ok {
+		// Fallback to raw.
+		raw, ok = rows[0]["_raw"]
+		if !ok {
+			return nil
+		}
+		_, err := fmt.Fprintln(w, formatValue(raw))
+
+		return err
+	}
+
+	// Pretty-print the structured JSON.
+	var parsed interface{}
+	s := fmt.Sprintf("%v", raw)
+	if err := json.Unmarshal([]byte(s), &parsed); err != nil {
+		_, err := fmt.Fprintln(w, s)
+
+		return err
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+
+	return enc.Encode(parsed)
+}
+
+// GlimpseCSVFormatter outputs the structured glimpse fields as CSV rows.
+type GlimpseCSVFormatter struct{}
+
+func (f *GlimpseCSVFormatter) Format(w io.Writer, rows []map[string]interface{}) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	raw, ok := rows[0]["__glimpse_result"]
+	if !ok {
+		raw = rows[0]["_raw"]
+		_, err := fmt.Fprintln(w, formatValue(raw))
+
+		return err
+	}
+
+	s := fmt.Sprintf("%v", raw)
+	var result struct {
+		Fields []struct {
+			Name        string  `json:"name"`
+			Type        string  `json:"type"`
+			CoveragePct float64 `json:"coverage_pct"`
+			NullPct     float64 `json:"null_pct"`
+			Cardinality int     `json:"cardinality"`
+		} `json:"fields"`
+		Sampled   int   `json:"sampled"`
+		ElapsedMs int64 `json:"elapsed_ms"`
+	}
+	if err := json.Unmarshal([]byte(s), &result); err != nil {
+		_, err := fmt.Fprintln(w, formatValue(raw))
+
+		return err
+	}
+
+	cw := csv.NewWriter(w)
+	defer cw.Flush()
+	_ = cw.Write([]string{"field", "type", "coverage_pct", "null_pct", "cardinality"})
+	for _, f := range result.Fields {
+		card := ""
+		if f.Cardinality > 0 {
+			card = fmt.Sprintf("%d", f.Cardinality)
+		}
+		_ = cw.Write([]string{
+			f.Name,
+			f.Type,
+			fmt.Sprintf("%.1f", f.CoveragePct),
+			fmt.Sprintf("%.1f", f.NullPct),
+			card,
+		})
+	}
+
+	return cw.Error()
 }

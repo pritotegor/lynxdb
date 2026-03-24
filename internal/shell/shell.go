@@ -4,6 +4,7 @@ package shell
 
 import (
 	tea "charm.land/bubbletea/v2"
+	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/lynxbase/lynxdb/pkg/client"
 	"github.com/lynxbase/lynxdb/pkg/storage"
@@ -21,6 +22,8 @@ type RunOpts struct {
 
 // Run starts the interactive shell TUI.
 func Run(mode string, opts RunOpts) error {
+	zone.NewGlobal()
+
 	m := NewModel(mode, opts)
 
 	// Prepend welcome banner to results viewport.
@@ -28,6 +31,8 @@ func Run(mode string, opts RunOpts) error {
 
 	p := tea.NewProgram(m)
 	_, err := p.Run()
+
+	zone.Close()
 
 	return err
 }

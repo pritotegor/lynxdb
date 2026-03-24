@@ -2,12 +2,14 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
@@ -17,15 +19,15 @@ const glimpseMaxSample = 10000
 // It accumulates per-field stats (type, coverage, cardinality, top values)
 // and produces a single-row result batch with the formatted table in _raw.
 type GlimpseIterator struct {
-	child   Iterator
-	sampled int
-	done    bool
-	start   time.Time
+	child     Iterator
+	maxSample int
+	sampled   int
+	done      bool
+	start     time.Time
 
 	// Per-field accumulators.
-	fields     map[string]*glimpseField
-	total      int
-	formatHint string // e.g., "JSON" — set by caller if available
+	fields map[string]*glimpseField
+	total  int
 }
 
 type glimpseField struct {
@@ -42,10 +44,15 @@ type glimpseField struct {
 	numVals  []float64 // sampled for percentile computation (cap 1000)
 }
 
-func NewGlimpseIterator(child Iterator) *GlimpseIterator {
+func NewGlimpseIterator(child Iterator, sampleSize int) *GlimpseIterator {
+	if sampleSize <= 0 {
+		sampleSize = glimpseMaxSample
+	}
+
 	return &GlimpseIterator{
-		child:  child,
-		fields: make(map[string]*glimpseField),
+		child:     child,
+		maxSample: sampleSize,
+		fields:    make(map[string]*glimpseField),
 	}
 }
 
@@ -62,7 +69,7 @@ func (g *GlimpseIterator) Next(ctx context.Context) (*Batch, error) {
 	g.done = true
 
 	// Drain the child pipeline, accumulating field stats.
-	for g.sampled < glimpseMaxSample {
+	for g.sampled < g.maxSample {
 		batch, err := g.child.Next(ctx)
 		if err != nil {
 			return nil, err
@@ -72,16 +79,22 @@ func (g *GlimpseIterator) Next(ctx context.Context) (*Batch, error) {
 		}
 		g.accumulate(batch)
 		g.sampled += batch.Len
-		if g.sampled > glimpseMaxSample {
-			g.sampled = glimpseMaxSample
+		if g.sampled > g.maxSample {
+			g.sampled = g.maxSample
 		}
 	}
 
-	// Build the formatted table.
-	table := g.formatTable()
+	result := g.buildResult()
 
-	// Return as a single-row batch with _raw.
+	// Build the formatted table for TTY/_raw output.
+	table := g.formatTable(result)
+
+	// Serialize structured result for API consumers.
+	resultJSON, _ := json.Marshal(result)
+
+	// Return as a single-row batch with both structured and raw columns.
 	b := NewBatch(1)
+	b.Columns["__glimpse_result"] = []event.Value{event.StringValue(string(resultJSON))}
 	b.Columns["_raw"] = []event.Value{event.StringValue(table)}
 	b.Len = 1
 
@@ -161,15 +174,10 @@ func isBuiltinGlimpseField(name string) bool {
 	return false
 }
 
-func (g *GlimpseIterator) formatTable() string {
-	var sb strings.Builder
-
-	// Header.
-	sb.WriteString("  FIELD              TYPE      COVERAGE   NULL%   CARDINALITY   TOP VALUES\n")
-	sb.WriteString("  " + strings.Repeat("─", 95) + "\n")
-
-	// Sort fields: builtins first (canonical order), then user fields by coverage.
+func (g *GlimpseIterator) buildResult() *GlimpseResult {
 	names := g.sortedFieldNames()
+	fields := make([]GlimpseFieldInfo, 0, len(names))
+	elapsed := time.Since(g.start)
 
 	for _, name := range names {
 		f := g.fields[name]
@@ -181,48 +189,174 @@ func (g *GlimpseIterator) formatTable() string {
 		coverage := float64(f.count) / float64(total) * 100
 		nullPct := float64(f.nullCount) / float64(total) * 100
 		dominantType := g.dominantType(f)
-		cardinality := len(f.values)
 
-		// Format top values.
-		topValues := g.formatTopValues(f, dominantType)
+		info := GlimpseFieldInfo{
+			Name:        name,
+			Type:        dominantType,
+			CoveragePct: math.Round(coverage*10) / 10,
+			NullPct:     math.Round(nullPct*10) / 10,
+		}
 
-		// Truncate field name to fit.
-		fieldDisplay := name
+		if dominantType == "number" {
+			if f.numCount > 0 {
+				vals := make([]float64, len(f.numVals))
+				copy(vals, f.numVals)
+				sort.Float64s(vals)
+				info.NumStats = &GlimpseNumStats{
+					Min: f.numMin,
+					P50: glimpsePercentile(vals, 0.50),
+					P99: glimpsePercentile(vals, 0.99),
+					Max: f.numMax,
+				}
+				// Show cardinality for numeric fields with few unique values.
+				card := len(f.values)
+				if card > 0 && card <= 50 {
+					info.Cardinality = card
+				}
+			}
+		} else {
+			info.Cardinality = len(f.values)
+			info.TopValues = g.buildTopValues(f)
+		}
+
+		fields = append(fields, info)
+	}
+
+	return &GlimpseResult{
+		Fields:    fields,
+		Sampled:   g.sampled,
+		ElapsedMs: elapsed.Milliseconds(),
+	}
+}
+
+func (g *GlimpseIterator) buildTopValues(f *glimpseField) []GlimpseValue {
+	type kv struct {
+		k string
+		v int
+	}
+	pairs := make([]kv, 0, len(f.values))
+	for k, v := range f.values {
+		pairs = append(pairs, kv{k, v})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].v > pairs[j].v
+	})
+
+	total := f.count
+	if total == 0 {
+		return nil
+	}
+
+	result := make([]GlimpseValue, 0, len(pairs))
+	for _, p := range pairs {
+		pct := float64(p.v) / float64(total) * 100
+		result = append(result, GlimpseValue{
+			Value: p.k,
+			Count: p.v,
+			Pct:   math.Round(pct*10) / 10,
+		})
+	}
+
+	return result
+}
+
+func (g *GlimpseIterator) formatTable(result *GlimpseResult) string {
+	var sb strings.Builder
+
+	termWidth := ui.TerminalWidth()
+
+	// Fixed columns: FIELD(18) + TYPE(9) + COVERAGE(7) + NULL%(6) + CARDINALITY(13) + spaces(8)
+	fixedWidth := 61
+	topValuesWidth := termWidth - fixedWidth
+	if topValuesWidth < 20 {
+		topValuesWidth = 20
+	}
+
+	// Header.
+	header := "  FIELD              TYPE      COVERAGE   NULL%   CARDINALITY   TOP VALUES"
+	if len(header) > termWidth {
+		header = header[:termWidth]
+	}
+	sb.WriteString(header + "\n")
+	sepLen := len(header) - 2
+	if sepLen > 95 {
+		sepLen = 95
+	}
+	if sepLen > termWidth-2 {
+		sepLen = termWidth - 2
+	}
+	sb.WriteString("  " + strings.Repeat("─", sepLen) + "\n")
+
+	for _, f := range result.Fields {
+		fieldDisplay := f.Name
 		if len(fieldDisplay) > 18 {
 			fieldDisplay = fieldDisplay[:15] + "..."
 		}
 
-		cardStr := fmt.Sprintf("%d", cardinality)
-		if cardinality >= 50 {
-			cardStr = fmt.Sprintf("%d+", cardinality)
+		cardStr := ""
+		if f.Type == "number" {
+			if f.Cardinality > 0 {
+				cardStr = fmt.Sprintf("%d", f.Cardinality)
+			} else {
+				cardStr = "—"
+			}
+		} else {
+			if f.Cardinality >= 50 {
+				cardStr = fmt.Sprintf("%d+", f.Cardinality)
+			} else {
+				cardStr = fmt.Sprintf("%d", f.Cardinality)
+			}
 		}
-		if dominantType == "int" || dominantType == "float" {
-			cardStr = "—"
-		}
+
+		topValues := g.formatFieldDisplay(&f, topValuesWidth)
 
 		fmt.Fprintf(&sb, "  %-18s %-9s %5.1f%%    %4.1f%%   %-13s %s\n",
 			fieldDisplay,
-			dominantType,
-			coverage,
-			nullPct,
+			f.Type,
+			f.CoveragePct,
+			f.NullPct,
 			cardStr,
 			topValues,
 		)
 	}
 
 	// Footer.
-	elapsed := time.Since(g.start)
-	fieldCount := len(g.fields)
-	fmt.Fprintf(&sb, "\n  ✔ %s events sampled · %d fields · %s\n",
-		formatGlimpseNumber(g.sampled),
-		fieldCount,
-		elapsed.Round(time.Millisecond),
+	footer := fmt.Sprintf("\n  ✔ %s events sampled · %d fields · %s",
+		formatGlimpseNumber(result.Sampled),
+		len(result.Fields),
+		time.Duration(result.ElapsedMs)*time.Millisecond,
 	)
-	if g.formatHint != "" {
-		fmt.Fprintf(&sb, "  ℹ Format: %s\n", g.formatHint)
-	}
+	sb.WriteString(footer + "\n")
 
 	return sb.String()
+}
+
+func (g *GlimpseIterator) formatFieldDisplay(f *GlimpseFieldInfo, maxWidth int) string {
+	if f.NumStats != nil {
+		ns := f.NumStats
+		if math.Abs(ns.Min-ns.Max) < 1e-12 {
+			return fmt.Sprintf("const %g", ns.Min)
+		}
+
+		return fmt.Sprintf("min=%g p50=%g p99=%g max=%g", ns.Min, ns.P50, ns.P99, ns.Max)
+	}
+
+	remain := maxWidth
+	parts := make([]string, 0, 4)
+	for _, tv := range f.TopValues {
+		if remain <= 0 {
+			break
+		}
+		val := tv.Value
+		if len(val) > 20 {
+			val = val[:17] + "..."
+		}
+		part := fmt.Sprintf("%s(%.0f%%)", val, tv.Pct)
+		parts = append(parts, part)
+		remain -= len(part) + 2
+	}
+
+	return strings.Join(parts, ", ")
 }
 
 func (g *GlimpseIterator) sortedFieldNames() []string {
@@ -282,67 +416,6 @@ func (g *GlimpseIterator) dominantType(f *glimpseField) string {
 	return best
 }
 
-func (g *GlimpseIterator) formatTopValues(f *glimpseField, dominantType string) string {
-	if dominantType == "number" && f.count > 0 {
-		return g.formatNumericRange(f)
-	}
-
-	type kv struct {
-		k string
-		v int
-	}
-	pairs := make([]kv, 0, len(f.values))
-	for k, v := range f.values {
-		pairs = append(pairs, kv{k, v})
-	}
-	sort.Slice(pairs, func(i, j int) bool {
-		return pairs[i].v > pairs[j].v
-	})
-
-	total := f.count
-	if total == 0 {
-		return ""
-	}
-
-	parts := make([]string, 0, 4)
-	remain := 60 // max chars for top values column
-	for _, p := range pairs {
-		if remain <= 0 {
-			break
-		}
-		pct := float64(p.v) / float64(total) * 100
-		val := p.k
-		if len(val) > 20 {
-			val = val[:17] + "..."
-		}
-		part := fmt.Sprintf("%s(%.0f%%)", val, pct)
-		parts = append(parts, part)
-		remain -= len(part) + 2
-	}
-
-	return strings.Join(parts, ", ")
-}
-
-func (g *GlimpseIterator) formatNumericRange(f *glimpseField) string {
-	if f.numCount == 0 {
-		return ""
-	}
-
-	// Sort sampled values for percentile computation.
-	vals := make([]float64, len(f.numVals))
-	copy(vals, f.numVals)
-	sort.Float64s(vals)
-
-	p50 := glimpsePercentile(vals, 0.50)
-	p99 := glimpsePercentile(vals, 0.99)
-
-	if math.Abs(f.numMin-f.numMax) < 1e-12 {
-		return fmt.Sprintf("const %g", f.numMin)
-	}
-
-	return fmt.Sprintf("min=%g p50=%g p99=%g max=%g", f.numMin, p50, p99, f.numMax)
-}
-
 // glimpsePercentile returns the value at the given quantile (0.0-1.0) from a sorted slice.
 func glimpsePercentile(sorted []float64, q float64) float64 {
 	if len(sorted) == 0 {
@@ -385,6 +458,7 @@ func (g *GlimpseIterator) Close() error {
 
 func (g *GlimpseIterator) Schema() []FieldInfo {
 	return []FieldInfo{
+		{Name: "__glimpse_result", Type: "glimpse"},
 		{Name: "_raw", Type: "string"},
 	}
 }

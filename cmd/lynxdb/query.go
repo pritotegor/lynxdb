@@ -752,7 +752,7 @@ func prependParseToQuery(query, parseCmd string) string {
 	}
 
 	// Insert parse after the first pipe.
-	return trimmed[:pipeIdx+1] + " " + parseCmd + " " + trimmed[pipeIdx+1:]
+	return trimmed[:pipeIdx+1] + " " + parseCmd + " |" + trimmed[pipeIdx+1:]
 }
 
 // autoDetectFromFirstFile peeks at the first file's content and detects format.

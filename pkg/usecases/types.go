@@ -46,6 +46,9 @@ type SubmitResult struct {
 	// ErrorCode is a machine-readable code for the error (e.g., QUERY_MEMORY_EXCEEDED).
 	// Empty when no error or no specific code applies.
 	ErrorCode string
+
+	// Warnings holds user-facing warnings about the query (e.g., blocking operators).
+	Warnings []string
 }
 
 // StreamRequest is the domain input for streaming queries.

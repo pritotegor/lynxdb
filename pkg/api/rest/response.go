@@ -97,6 +97,7 @@ type metaFields struct {
 	QueryID         string     `json:"query_id,omitempty"`
 	SegmentsErrored *int       `json:"segments_errored,omitempty"` // E7: surface segment read errors
 	SearchStats     *metaStats `json:"stats,omitempty"`            // rich query stats for CLI display
+	Warnings        []string   `json:"warnings,omitempty"`         // user-facing warnings about the query
 }
 
 // metaStats holds detailed query execution statistics returned in the
@@ -269,6 +270,15 @@ func WithSearchStats(ss *metaStats) MetaOpt {
 	}
 }
 
+// WithWarnings adds user-facing warnings to the response meta.
+func WithWarnings(warnings []string) MetaOpt {
+	return func(m *metaFields) {
+		if len(warnings) > 0 {
+			m.Warnings = warnings
+		}
+	}
+}
+
 // respondData writes {"data": payload, "meta": {...}}.
 // When a query_id is present, it is also set as an X-Query-ID response header
 // so the logging middleware can correlate HTTP requests with query execution (O1).
@@ -279,7 +289,7 @@ func respondData(w http.ResponseWriter, httpStatus int, data interface{}, opts .
 	}
 	envelope := map[string]interface{}{"data": data}
 	// Only include meta if it has content.
-	if meta.TookMS != nil || meta.Scanned != nil || meta.QueryID != "" || meta.SegmentsErrored != nil || meta.SearchStats != nil {
+	if meta.TookMS != nil || meta.Scanned != nil || meta.QueryID != "" || meta.SegmentsErrored != nil || meta.SearchStats != nil || len(meta.Warnings) > 0 {
 		envelope["meta"] = meta
 	}
 	// Expose query_id as a response header for logging middleware correlation.

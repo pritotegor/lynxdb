@@ -175,6 +175,8 @@ func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitRe
 	switch result.ResultType {
 	case server.ResultTypeAggregate, server.ResultTypeTimechart:
 		data = buildAggregateResponse(result.ResultType, result.Results, limit, offset)
+	case server.ResultTypeGlimpse:
+		data = buildGlimpseResponse(result.Results)
 	default:
 		data = buildEventsResponse(result.Results, limit, offset)
 	}
@@ -184,7 +186,8 @@ func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitRe
 		WithScanned(result.Stats.RowsScanned),
 		WithQueryID(result.QueryID),
 		WithSegmentsErrored(result.Stats.SegmentsErrored),
-		WithSearchStats(searchStatsToMeta(&result.Stats)))
+		WithSearchStats(searchStatsToMeta(&result.Stats)),
+		WithWarnings(result.Warnings))
 }
 
 // searchStatsToMeta converts a server.SearchStats to the REST meta stats struct.
@@ -336,6 +339,31 @@ func buildEventsResponse(rows []spl2.ResultRow, limit, offset int) map[string]in
 		"type": "events", "events": events,
 		"total": total, "has_more": hasMore,
 	}
+}
+
+// buildGlimpseResponse extracts the structured glimpse result from __glimpse_result column.
+func buildGlimpseResponse(rows []spl2.ResultRow) map[string]interface{} {
+	if len(rows) == 0 {
+		return map[string]interface{}{
+			"type": "schema", "fields": []interface{}{}, "sampled": 0,
+		}
+	}
+
+	// Extract the structured JSON from the first row's __glimpse_result field.
+	raw, ok := rows[0].Fields["__glimpse_result"]
+	if !ok {
+		// Fallback: return as events if structured column is missing.
+		return buildEventsResponse(rows, 0, 0)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(fmt.Sprintf("%v", raw)), &result); err != nil {
+		return buildEventsResponse(rows, 0, 0)
+	}
+
+	result["type"] = "schema"
+
+	return result
 }
 
 func buildAggregateResponse(rt server.ResultType, rows []spl2.ResultRow, limit, offset int) map[string]interface{} {

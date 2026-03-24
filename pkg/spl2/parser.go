@@ -723,7 +723,17 @@ func (p *Parser) parseHead() (*HeadCommand, error) {
 func (p *Parser) parseGlimpse() (*GlimpseCommand, error) {
 	p.advance() // consume "glimpse"
 
-	return &GlimpseCommand{}, nil
+	cmd := &GlimpseCommand{}
+	if p.peek().Type == TokenNumber {
+		tok := p.advance()
+		n, err := strconv.Atoi(tok.Literal)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("spl2: invalid glimpse sample size %q", tok.Literal)
+		}
+		cmd.SampleSize = n
+	}
+
+	return cmd, nil
 }
 
 func (p *Parser) parseDescribe() (*DescribeCommand, error) {

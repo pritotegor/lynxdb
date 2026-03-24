@@ -603,3 +603,28 @@ func TestExtractQueryHints_UnpackPrefixFieldPredicatesExcluded(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractQueryHints_GlimpseBlockingWarning(t *testing.T) {
+	tests := []struct {
+		name        string
+		query       string
+		wantWarning bool
+	}{
+		{"terminal glimpse", "| glimpse", false},
+		{"glimpse followed by head", "| glimpse | head 10", true},
+		{"glimpse followed by sort", "| glimpse | sort -count", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prog, err := ParseProgram(tt.query)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			hints := ExtractQueryHints(prog)
+			hasWarning := len(hints.Warnings) > 0
+			if hasWarning != tt.wantWarning {
+				t.Errorf("Warnings: got %v (len=%d), wantWarning=%v", hints.Warnings, len(hints.Warnings), tt.wantWarning)
+			}
+		})
+	}
+}

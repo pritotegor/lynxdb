@@ -14,6 +14,9 @@ type keyMap struct {
 	ScrollUp      key.Binding
 	ScrollDn      key.Binding
 	FocusBack     key.Binding
+	ToggleSidebar key.Binding
+	CopyResults   key.Binding
+	CopyResultsMD key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -50,6 +53,15 @@ func defaultKeyMap() keyMap {
 		),
 		FocusBack: key.NewBinding(
 			key.WithKeys("esc"),
+		),
+		ToggleSidebar: key.NewBinding(
+			key.WithKeys("f2"),
+		),
+		CopyResults: key.NewBinding(
+			key.WithKeys("y"),
+		),
+		CopyResultsMD: key.NewBinding(
+			key.WithKeys("Y"),
 		),
 	}
 }

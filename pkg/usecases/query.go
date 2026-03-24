@@ -806,6 +806,12 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		limit = s.queryCfg.MaxResultLimit
 	}
 
+	// Collect any user-facing warnings from query hints.
+	var warnings []string
+	if plan.Hints != nil && len(plan.Hints.Warnings) > 0 {
+		warnings = plan.Hints.Warnings
+	}
+
 	switch req.Mode {
 	case QueryModeSync:
 		syncTimeout := s.queryCfg.SyncTimeout
@@ -816,7 +822,9 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		defer timer.Stop()
 		select {
 		case <-job.Done():
-			return buildSyncResult(job, limit, req.Offset), nil
+			r := buildSyncResult(job, limit, req.Offset)
+			r.Warnings = warnings
+			return r, nil
 		case <-timer.C:
 			// Promoted to async — detach from HTTP context so job survives disconnect.
 			job.Detach()
@@ -831,7 +839,9 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		defer timer.Stop()
 		select {
 		case <-job.Done():
-			return buildSyncResult(job, limit, req.Offset), nil
+			r := buildSyncResult(job, limit, req.Offset)
+			r.Warnings = warnings
+			return r, nil
 		case <-timer.C:
 			// Promoted to async — detach from HTTP context so job survives disconnect.
 			job.Detach()

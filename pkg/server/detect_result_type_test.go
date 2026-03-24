@@ -94,6 +94,19 @@ func TestDetectResultType(t *testing.T) {
 			},
 			want: ResultTypeEvents,
 		},
+		{
+			name:     "glimpse_returns_schema",
+			commands: []spl2.Command{&spl2.GlimpseCommand{}},
+			want:     ResultTypeGlimpse,
+		},
+		{
+			name: "glimpse_with_trailing_head_returns_schema",
+			commands: []spl2.Command{
+				&spl2.GlimpseCommand{SampleSize: 100},
+				&spl2.HeadCommand{Count: 5},
+			},
+			want: ResultTypeGlimpse,
+		},
 	}
 
 	for _, tt := range tests {

@@ -969,7 +969,7 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return NewTopIteratorWithBudget(child, c.Field, c.ByField, c.N, true, qc.batchSize, qc.newAccount("rare")), nil
 
 	case *spl2.GlimpseCommand:
-		return NewGlimpseIterator(child), nil
+		return NewGlimpseIterator(child, c.SampleSize), nil
 
 	case *spl2.DescribeCommand:
 		return NewDescribeIterator(child), nil

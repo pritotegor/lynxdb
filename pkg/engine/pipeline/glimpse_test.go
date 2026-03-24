@@ -16,7 +16,7 @@ func TestGlimpse_BasicFields(t *testing.T) {
 		{"level": "warn", "msg": "slow", "count": 8},
 	})
 
-	op := NewGlimpseIterator(NewScanIterator(events, 1024))
+	op := NewGlimpseIterator(NewScanIterator(events, 1024), 0)
 	ctx := context.Background()
 	if err := op.Init(ctx); err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestGlimpse_NumericStats(t *testing.T) {
 		{"duration": 1000},
 	})
 
-	op := NewGlimpseIterator(NewScanIterator(events, 1024))
+	op := NewGlimpseIterator(NewScanIterator(events, 1024), 0)
 	ctx := context.Background()
 	if err := op.Init(ctx); err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestGlimpse_NullCoverage(t *testing.T) {
 		{"level": "warn", "trace_id": "def"},
 	})
 
-	op := NewGlimpseIterator(NewScanIterator(events, 1024))
+	op := NewGlimpseIterator(NewScanIterator(events, 1024), 0)
 	ctx := context.Background()
 	if err := op.Init(ctx); err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestGlimpse_NullCoverage(t *testing.T) {
 func TestGlimpse_EmptyInput(t *testing.T) {
 	events := makeGlimpseEvents([]map[string]interface{}{})
 
-	op := NewGlimpseIterator(NewScanIterator(events, 1024))
+	op := NewGlimpseIterator(NewScanIterator(events, 1024), 0)
 	ctx := context.Background()
 	if err := op.Init(ctx); err != nil {
 		t.Fatal(err)
@@ -133,13 +133,16 @@ func TestGlimpse_EmptyInput(t *testing.T) {
 	}
 }
 
-func TestGlimpse_FormatHint(t *testing.T) {
+func TestGlimpse_SampleSize(t *testing.T) {
 	events := makeGlimpseEvents([]map[string]interface{}{
 		{"level": "error"},
+		{"level": "info"},
+		{"level": "warn"},
+		{"level": "debug"},
+		{"level": "trace"},
 	})
 
-	op := NewGlimpseIterator(NewScanIterator(events, 1024))
-	op.formatHint = "JSON"
+	op := NewGlimpseIterator(NewScanIterator(events, 1024), 2)
 	ctx := context.Background()
 	if err := op.Init(ctx); err != nil {
 		t.Fatal(err)
@@ -151,8 +154,8 @@ func TestGlimpse_FormatHint(t *testing.T) {
 	}
 
 	raw := batch.Columns["_raw"][0].AsString()
-	if !strings.Contains(raw, "Format: JSON") {
-		t.Errorf("expected 'Format: JSON' in footer, got: %s", raw)
+	if !strings.Contains(raw, "2 events sampled") {
+		t.Errorf("expected '2 events sampled' with sample size 2, got: %s", raw)
 	}
 }
 
@@ -163,7 +166,7 @@ func TestGlimpse_ConstantNumericField(t *testing.T) {
 		{"status": 200},
 	})
 
-	op := NewGlimpseIterator(NewScanIterator(events, 1024))
+	op := NewGlimpseIterator(NewScanIterator(events, 1024), 0)
 	ctx := context.Background()
 	if err := op.Init(ctx); err != nil {
 		t.Fatal(err)
@@ -189,6 +192,30 @@ func TestGlimpsePercentile(t *testing.T) {
 	p99 := glimpsePercentile(vals, 0.99)
 	if p99 < 9 || p99 > 11 {
 		t.Errorf("expected p99 around 10, got %g", p99)
+	}
+}
+
+func TestGlimpse_NumericCardinality(t *testing.T) {
+	events := makeGlimpseEvents([]map[string]interface{}{
+		{"status": 200},
+		{"status": 404},
+		{"status": 500},
+	})
+
+	op := NewGlimpseIterator(NewScanIterator(events, 1024), 0)
+	ctx := context.Background()
+	if err := op.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := op.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw := batch.Columns["_raw"][0].AsString()
+	if !strings.Contains(raw, "   3   ") && !strings.Contains(raw, " 3 ") {
+		t.Errorf("expected cardinality 3 for numeric field with 3 unique values, got: %s", raw)
 	}
 }
 

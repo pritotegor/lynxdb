@@ -15,7 +15,7 @@ import (
 const editorMaxLines = 6
 
 // Editor wraps textarea.Model with history navigation, ghost-text autocomplete,
-// and dynamic height.
+// popup completion, and dynamic height.
 type Editor struct {
 	input       textarea.Model
 	history     *History
@@ -26,6 +26,7 @@ type Editor struct {
 	ghostText   string // autocomplete ghost suffix
 	multiLine   bool   // tracks multi-line state for prompt switching
 	promptWidth int    // cached display width of the prompt
+	popup       AutocompletePopup
 }
 
 // NewEditor creates an editor with the given prompt strings.
@@ -94,21 +95,70 @@ func (e *Editor) InMultiLine() bool {
 	return e.input.LineCount() > 1
 }
 
+// InsertAtCursor inserts text at the current cursor position.
+func (e *Editor) InsertAtCursor(text string) {
+	e.input.InsertString(text)
+}
+
+// SetValue replaces the entire editor content.
+func (e *Editor) SetValue(text string) {
+	e.input.SetValue(text)
+}
+
 // Update handles key events and returns commands.
 func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		// When popup is visible, intercept navigation keys.
+		if e.popup.Visible() {
+			switch {
+			case key.Matches(msg, e.keys.FocusBack): // Esc
+				e.popup.Hide()
+				return nil, nil, nil
+			case key.Matches(msg, e.keys.Submit): // Enter — accept selection
+				if item := e.popup.SelectedItem(); item != nil {
+					e.input.SetValue(item.FullLine)
+					e.input.MoveToEnd()
+					e.updateHeight()
+				}
+				e.popup.Hide()
+				e.refreshSuggestions()
+				return nil, nil, nil
+			case key.Matches(msg, e.keys.ScrollDn): // PgDown — move down in popup
+				e.popup.MoveDown()
+				return nil, nil, nil
+			case key.Matches(msg, e.keys.ScrollUp): // PgUp — move up in popup
+				e.popup.MoveUp()
+				return nil, nil, nil
+			default:
+				// Check for down/up arrow specifically for popup nav.
+				if msg.String() == "down" {
+					e.popup.MoveDown()
+					return nil, nil, nil
+				}
+				if msg.String() == "up" {
+					e.popup.MoveUp()
+					return nil, nil, nil
+				}
+				// Any other key: dismiss popup and process the key normally.
+				e.popup.Hide()
+			}
+		}
+
 		switch {
 		case key.Matches(msg, e.keys.Submit):
+			e.popup.Hide()
 			return e.handleSubmit()
 
 		case key.Matches(msg, e.keys.InsertNewline):
+			e.popup.Hide()
 			e.input.InsertRune('\n')
 			e.updateHeight()
 			e.refreshSuggestions()
 			return nil, nil, nil
 
 		case key.Matches(msg, e.keys.Cancel):
+			e.popup.Hide()
 			return e.handleCancel()
 
 		case key.Matches(msg, e.keys.Quit):
@@ -116,6 +166,11 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 				return nil, nil, &slashCommandMsg{quit: true}
 			}
 			// Non-empty: fall through to textarea (ctrl+d = delete forward).
+
+		case msg.String() == "ctrl+space", msg.String() == "ctrl+ ":
+			// Explicit popup trigger.
+			e.triggerPopup()
+			return nil, nil, nil
 
 		case key.Matches(msg, e.keys.AcceptSugg):
 			if e.ghostText != "" {
@@ -127,23 +182,24 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 			return nil, nil, nil
 
 		case key.Matches(msg, e.keys.HistPrev):
-			if entry, ok := e.history.Prev(); ok {
-				e.input.SetValue(entry)
-				e.input.MoveToEnd()
-				e.updateHeight()
-			}
-			e.refreshSuggestions()
+			e.popup.Hide()
+			e.navigateHistoryPrev()
 			return nil, nil, nil
 
 		case key.Matches(msg, e.keys.HistNext):
-			if entry, ok := e.history.Next(); ok {
-				e.input.SetValue(entry)
-				e.input.MoveToEnd()
-			} else {
-				e.input.Reset()
-			}
-			e.updateHeight()
-			e.refreshSuggestions()
+			e.popup.Hide()
+			e.navigateHistoryNext()
+			return nil, nil, nil
+
+		// Up/down arrows navigate history in single-line mode.
+		case !e.multiLine && msg.String() == "up":
+			e.popup.Hide()
+			e.navigateHistoryPrev()
+			return nil, nil, nil
+
+		case !e.multiLine && msg.String() == "down":
+			e.popup.Hide()
+			e.navigateHistoryNext()
 			return nil, nil, nil
 		}
 	}
@@ -156,6 +212,48 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 	e.refreshSuggestions()
 
 	return cmd, nil, nil
+}
+
+// triggerPopup shows the autocomplete popup with all available completions.
+func (e *Editor) triggerPopup() {
+	if e.completer == nil {
+		return
+	}
+
+	items := e.completer.SuggestAll(e.input.Value())
+	if len(items) < 2 {
+		e.popup.Hide()
+		return
+	}
+
+	// Anchor column = prompt width + cursor column position.
+	anchorCol := e.promptWidth + e.input.Column()
+	e.popup.Show(items, anchorCol)
+}
+
+// TriggerAutoPopup is called by the model after the 300ms debounce fires.
+// Shows popup only if 2+ candidates exist.
+func (e *Editor) TriggerAutoPopup() {
+	if e.popup.Visible() {
+		return // already showing
+	}
+
+	e.triggerPopup()
+}
+
+// PopupVisible reports whether the autocomplete popup is displayed.
+func (e *Editor) PopupVisible() bool {
+	return e.popup.Visible()
+}
+
+// PopupView returns the rendered popup string (empty if hidden).
+func (e *Editor) PopupView(maxWidth int) string {
+	return e.popup.View(maxWidth)
+}
+
+// PopupAnchorCol returns the column where the popup should be anchored.
+func (e *Editor) PopupAnchorCol() int {
+	return e.popup.anchorCol
 }
 
 // refreshSuggestions recomputes ghost text when cursor is at the end of input.
@@ -248,6 +346,26 @@ func (e *Editor) updatePrompt() {
 		}
 		return dimStyle.Render(strings.Repeat(" ", padWidth) + num + suffix)
 	})
+}
+
+func (e *Editor) navigateHistoryPrev() {
+	if entry, ok := e.history.Prev(); ok {
+		e.input.SetValue(entry)
+		e.input.MoveToEnd()
+		e.updateHeight()
+	}
+	e.refreshSuggestions()
+}
+
+func (e *Editor) navigateHistoryNext() {
+	if entry, ok := e.history.Next(); ok {
+		e.input.SetValue(entry)
+		e.input.MoveToEnd()
+	} else {
+		e.input.Reset()
+	}
+	e.updateHeight()
+	e.refreshSuggestions()
 }
 
 func (e *Editor) handleSubmit() (tea.Cmd, *querySubmitMsg, *slashCommandMsg) {

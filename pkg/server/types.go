@@ -471,6 +471,7 @@ const (
 	ResultTypeEvents      ResultType = "events"
 	ResultTypeAggregate   ResultType = "aggregate"
 	ResultTypeTimechart   ResultType = "timechart"
+	ResultTypeGlimpse     ResultType = "schema"
 	ResultTypeViewCreated ResultType = "view_created"
 )
 

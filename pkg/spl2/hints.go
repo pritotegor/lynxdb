@@ -63,6 +63,7 @@ type QueryHints struct {
 	RangePredicates         []RangePredicate         // field range for pushdown
 	InPredicates            []InPredicate            // field IN (values) for segment-level pushdown
 	SkipRaw                 bool                     // true when _raw is not needed — all required fields are stored columns
+	Warnings                []string                 // user-facing warnings about the query
 	searchExpr              SearchExpr               // first search expression (for pushdown analysis)
 	streamable              bool                     // true if query can execute without accumulating all events
 	terminalCmd             string                   // type of last command ("stats", "head", "search", etc.)
@@ -196,6 +197,17 @@ func extractQueryHintsFromQuery(q *Query) *QueryHints {
 			h.streamable = false
 
 			break
+		}
+	}
+
+	// Check for blocking operators (glimpse, describe) followed by more commands.
+	for i, cmd := range q.Commands {
+		switch cmd.(type) {
+		case *GlimpseCommand:
+			if i < len(q.Commands)-1 {
+				h.Warnings = append(h.Warnings,
+					"'glimpse' is a blocking operator that consumes all events. Commands after '| glimpse' have no effect. Use '| describe' for non-blocking schema inspection.")
+			}
 		}
 	}
 

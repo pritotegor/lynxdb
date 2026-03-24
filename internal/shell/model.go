@@ -2,9 +2,11 @@ package shell
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/lynxbase/lynxdb/internal/output"
 	"github.com/lynxbase/lynxdb/internal/ui"
@@ -26,6 +29,7 @@ type Model struct {
 	header    Header
 	editor    Editor
 	results   Results
+	sidebar   Sidebar
 	statusBar StatusBar
 
 	session *Session
@@ -40,6 +44,13 @@ type Model struct {
 	focus         Focus
 	running       bool
 	startTime     time.Time
+
+	// Sidebar state.
+	sidebarOpen   bool
+	sidebarLay    sidebarLayout // cached layout from last WindowSizeMsg
+	explainSeq    int           // debounce sequence counter for explain
+	popupSeq      int           // debounce sequence counter for auto-popup
+	lastEditorVal string        // tracks editor content for change detection
 
 	// Async query state.
 	jobID     string       // non-empty while polling an async job
@@ -70,6 +81,7 @@ func NewModel(mode string, opts RunOpts) Model {
 	header := NewHeader(mode, opts.Server, opts.File, opts.Events)
 	editor := NewEditor(prompt, contPrompt, history, completer)
 	results := NewResults(80, 20)
+	sidebar := NewSidebar(mode)
 	statusBar := NewStatusBar(mode)
 
 	sess := &Session{
@@ -83,15 +95,17 @@ func NewModel(mode string, opts RunOpts) Model {
 	}
 
 	return Model{
-		header:    header,
-		editor:    editor,
-		results:   results,
-		statusBar: statusBar,
-		session:   sess,
-		completer: completer,
-		history:   history,
-		keys:      defaultKeyMap(),
-		focus:     EditorFocus,
+		header:      header,
+		editor:      editor,
+		results:     results,
+		sidebar:     sidebar,
+		statusBar:   statusBar,
+		session:     sess,
+		sidebarOpen: mode == "server", // sidebar open by default in server mode
+		completer:   completer,
+		history:     history,
+		keys:        defaultKeyMap(),
+		focus:       EditorFocus,
 	}
 }
 
@@ -101,9 +115,13 @@ func (m Model) Init() tea.Cmd {
 		m.statusBar.spinner.Tick,
 	}
 
-	// Fetch fields for autocomplete in server mode.
+	// Fetch fields for autocomplete and sidebar data in server mode.
 	if m.session.Mode == "server" && m.session.Client != nil {
-		cmds = append(cmds, fetchFieldsCmd(m.session.Client))
+		cmds = append(cmds,
+			fetchFieldsCmd(m.session.Client),
+			fetchSidebarDataCmd(m.session.Client),
+			sidebarRefreshTickCmd(),
+		)
 	}
 
 	return tea.Batch(cmds...)
@@ -117,14 +135,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.header.SetWidth(msg.Width)
 		m.statusBar.SetWidth(msg.Width)
-		m.editor.SetWidth(msg.Width)
-		// Results viewport: remaining height minus header(1) + editor(dynamic) + statusbar(1).
-		editorH := m.editor.EditorHeight()
-		resultsHeight := msg.Height - 1 - editorH - 1
-		if resultsHeight < 1 {
-			resultsHeight = 1
-		}
-		m.results.SetSize(msg.Width, resultsHeight)
+		m.editor.SetWidth(msg.Width) // editor spans full width
+
+		m.recalcLayout()
 
 		return m, nil
 
@@ -139,10 +152,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fieldInfos = msg.fieldInfo
 		m.completer.SetFields(msg.fields)
 		m.completer.SetFieldValues(msg.fieldInfo)
+		m.sidebar.SetFields(msg.fieldInfo)
 
 		if len(msg.sources) > 0 {
 			m.completer.SetSources(msg.sources)
 		}
+
+		return m, nil
+
+	case sidebarDataMsg:
+		m.sidebar.SetServerInfo(msg.server)
+		m.sidebar.SetIndexes(msg.indexes)
+
+		return m, nil
+
+	case sidebarRefreshTickMsg:
+		var cmds []tea.Cmd
+		if m.session.Mode == "server" && m.session.Client != nil {
+			cmds = append(cmds, fetchSidebarDataCmd(m.session.Client))
+		}
+		cmds = append(cmds, sidebarRefreshTickCmd())
+
+		return m, tea.Batch(cmds...)
+
+	case explainDebounceMsg:
+		// Ignore stale debounce ticks.
+		if msg.seq != m.explainSeq {
+			return m, nil
+		}
+
+		query := strings.TrimSpace(m.editor.Value())
+		if query == "" || strings.HasPrefix(query, "/") {
+			m.sidebar.ClearQueryPlan()
+
+			return m, nil
+		}
+
+		if m.session.Mode != "server" || m.session.Client == nil {
+			return m, nil
+		}
+
+		return m, fetchExplainCmd(m.session.Client, query)
+
+	case explainResultMsg:
+		if msg.err != nil {
+			m.sidebar.ClearQueryPlan()
+		} else {
+			m.sidebar.SetQueryPlan(msg.result)
+		}
+
+		return m, nil
+
+	case popupDebounceMsg:
+		if msg.seq != m.popupSeq {
+			return m, nil
+		}
+
+		m.editor.TriggerAutoPopup()
 
 		return m, nil
 
@@ -208,7 +274,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.tailCount++
-		tableStr := renderResultRows([]map[string]interface{}{msg.event}, m.width, m.session.Format)
+		tableStr := renderResultRows([]map[string]interface{}{msg.event}, m.sidebarLay.mainW, m.session.Format)
 		m.results.AppendText(strings.TrimRight(tableStr, "\n"))
 
 		return m, waitForTailEvent(msg.eventCh, msg.errCh)
@@ -242,8 +308,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if trimmed == "_" {
 				// Re-display last results.
 				m.running = false
+				rw := m.sidebarLay.mainW
+				if rw == 0 {
+					rw = m.width
+				}
 				m.results.AppendResult(query, m.session.LastRows, 0, nil,
-					m.width, m.session.Format, false, "", nil)
+					rw, m.session.Format, false, "", nil)
 				return m, nil
 			}
 			// "_ | <pipeline>" — execute pipeline on last results.
@@ -291,8 +361,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			zeroCtx = &ZeroResultContext{Session: m.session, FieldInfos: m.fieldInfos}
 		}
 
-		m.results.AppendResult(msg.query, msg.rows, msg.elapsed, msg.err, m.width,
+		resultW := m.sidebarLay.mainW
+		if resultW == 0 {
+			resultW = m.width
+		}
+		m.results.AppendResult(msg.query, msg.rows, msg.elapsed, msg.err, resultW,
 			m.session.Format, m.session.Timing, msg.hints, zeroCtx)
+
+		// Update sidebar with query stats and history.
+		if msg.err == nil {
+			m.sidebar.SetQueryStats(buildQueryStats(msg.query, msg.rows, msg.elapsed, msg.meta))
+		}
+		m.history.SetLastDuration(msg.elapsed)
+		m.sidebar.SetHistory(m.history.RecentEntries(10))
 
 		return m, nil
 
@@ -334,6 +415,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, cmd
 
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg)
+
 	case tea.MouseWheelMsg:
 		cmd := m.results.Update(msg)
 
@@ -347,6 +431,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Toggle sidebar — F2.
+	if key.Matches(msg, m.keys.ToggleSidebar) {
+		m.sidebarOpen = !m.sidebarOpen
+		m.recalcLayout()
+
+		return m, nil
+	}
+
 	// Global quit — Ctrl+D on empty input.
 	if key.Matches(msg, m.keys.Quit) && m.editor.Value() == "" && !m.editor.InMultiLine() {
 		_ = m.history.Save()
@@ -401,6 +493,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Route to focused component.
 	if m.focus == ResultsFocus {
+		// Copy results to clipboard.
+		if key.Matches(msg, m.keys.CopyResults) || key.Matches(msg, m.keys.CopyResultsMD) {
+			markdown := key.Matches(msg, m.keys.CopyResultsMD)
+			m.copyLastResults(markdown)
+
+			return m, nil
+		}
+
 		// Pass scroll keys to viewport.
 		cmd := m.results.Update(msg)
 
@@ -411,17 +511,34 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	cmd, submitMsg, slashMsg := m.editor.Update(msg)
 
 	// Recalculate layout when editor height may have changed.
-	editorH := m.editor.EditorHeight()
-	resultsH := m.height - 1 - editorH - 1
-	if resultsH < 1 {
-		resultsH = 1
+	m.recalcLayout()
+
+	// Detect editor content changes for live query plan debounce and auto-popup.
+	var extraCmds []tea.Cmd
+	if newVal := m.editor.Value(); newVal != m.lastEditorVal {
+		m.lastEditorVal = newVal
+		m.explainSeq++
+		m.popupSeq++
+
+		if strings.TrimSpace(newVal) == "" {
+			m.sidebar.ClearQueryPlan()
+		} else {
+			if m.session.Mode == "server" && m.session.Client != nil {
+				m.sidebar.SetPlanTyping()
+				extraCmds = append(extraCmds, explainDebounceCmd(m.explainSeq))
+			}
+
+			extraCmds = append(extraCmds, popupDebounceCmd(m.popupSeq))
+		}
 	}
-	m.results.SetSize(m.width, resultsH)
 
 	if submitMsg != nil {
 		m.running = true
 		m.startTime = time.Now()
 		m.jobQuery = submitMsg.query
+
+		// Clear plan on submit — the query is being executed now.
+		m.sidebar.ClearQueryPlan()
 
 		if m.session.Mode == "server" {
 			if hints := spl2.DetectCompatHints(submitMsg.query); len(hints) > 0 {
@@ -468,37 +585,309 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Batch the editor command with debounce commands if present.
+	if len(extraCmds) > 0 {
+		all := append([]tea.Cmd{cmd}, extraCmds...)
+		return m, tea.Batch(all...)
+	}
+
 	return m, cmd
+}
+
+// handleMouseClick processes mouse click events for sidebar zones.
+func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	// Check sidebar field clicks.
+	for _, f := range m.sidebar.fields {
+		if z := zone.Get(zoneFieldPrefix + f.Name); z != nil && z.InBounds(msg) {
+			m.editor.InsertAtCursor(f.Name)
+			m.focus = EditorFocus
+
+			return m, nil
+		}
+	}
+
+	// Check sidebar history clicks.
+	for i, h := range m.sidebar.history {
+		if z := zone.Get(fmt.Sprintf("%s%d", zoneHistPrefix, i)); z != nil && z.InBounds(msg) {
+			m.editor.SetValue(h.Query)
+			m.focus = EditorFocus
+
+			return m, nil
+		}
+	}
+
+	// Check sidebar section header clicks (toggle collapse).
+	for _, sec := range []SidebarSection{
+		SectionServer, SectionIndexes, SectionFields,
+		SectionQueryPlan, SectionQueryStats, SectionHistory,
+	} {
+		if z := zone.Get(zoneSectionPrefix + sectionKey(sec)); z != nil && z.InBounds(msg) {
+			m.sidebar.ToggleSection(sec)
+
+			return m, nil
+		}
+	}
+
+	return m, nil
 }
 
 // View renders the full-screen TUI.
 func (m Model) View() tea.View {
 	var b strings.Builder
 
-	// Header (1 line).
+	// Header (1 line, full width).
 	b.WriteString(m.header.View())
 	b.WriteByte('\n')
 
-	// Results viewport (fills remaining space).
-	b.WriteString(m.results.View())
+	// Main area: results + optional sidebar.
+	resultsView := m.results.View()
+
+	if m.sidebarOpen && m.sidebarLay.sidebarW > 0 {
+		editorH := m.editor.EditorHeight()
+		mainH := m.height - 1 - editorH - 1
+		if mainH < 1 {
+			mainH = 1
+		}
+
+		separator := renderVerticalSeparator(mainH)
+		sidebarView := m.sidebar.View()
+		mainArea := lipgloss.JoinHorizontal(lipgloss.Top, resultsView, separator, sidebarView)
+		b.WriteString(mainArea)
+	} else {
+		b.WriteString(resultsView)
+	}
+
 	b.WriteByte('\n')
 
-	// Editor (1 line).
+	// Editor (full width).
 	b.WriteString(m.editor.View())
 	b.WriteByte('\n')
 
-	// Status bar (1 line).
+	// Status bar (full width).
 	var elapsed time.Duration
 	if m.running {
 		elapsed = time.Since(m.startTime)
 	}
-	b.WriteString(m.statusBar.View(m.focus, m.running, m.editor.InMultiLine(), elapsed, m.progress, m.tailActive))
+	b.WriteString(m.statusBar.View(m.focus, m.running, m.editor.InMultiLine(), elapsed, m.progress, m.tailActive, m.sidebarOpen))
 
-	v := tea.NewView(b.String())
+	output := b.String()
+
+	// Overlay autocomplete popup on top of the rendered output.
+	if m.editor.PopupVisible() {
+		popupStr := m.editor.PopupView(m.width / 2)
+		if popupStr != "" {
+			popupH := strings.Count(popupStr, "\n") + 1
+			anchorCol := m.editor.PopupAnchorCol()
+			if anchorCol < 0 {
+				anchorCol = 0
+			}
+
+			// Position: bottom of the output minus editor height minus statusbar minus popup height.
+			editorH := m.editor.EditorHeight()
+			popupY := m.height - editorH - 1 - popupH // above the editor
+			if popupY < 1 {
+				popupY = 1
+			}
+
+			output = placeOverlay(output, popupStr, anchorCol, popupY, m.width, m.height)
+		}
+	}
+
+	v := tea.NewView(zone.Scan(output))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 
 	return v
+}
+
+// placeOverlay paints overlayStr on top of baseStr at the given (x, y) position.
+func placeOverlay(baseStr, overlayStr string, x, y, totalW, totalH int) string {
+	baseLines := strings.Split(baseStr, "\n")
+	overlayLines := strings.Split(overlayStr, "\n")
+
+	for i, oLine := range overlayLines {
+		row := y + i
+		if row < 0 || row >= len(baseLines) {
+			continue
+		}
+
+		baseLine := baseLines[row]
+		baseRunes := []rune(baseLine)
+
+		// Ensure base line is wide enough.
+		for len(baseRunes) < x {
+			baseRunes = append(baseRunes, ' ')
+		}
+
+		// Replace characters at position x with overlay content.
+		oRunes := []rune(oLine)
+		oLen := len(oRunes)
+
+		var result []rune
+		result = append(result, baseRunes[:x]...)
+		result = append(result, oRunes...)
+
+		if x+oLen < len(baseRunes) {
+			result = append(result, baseRunes[x+oLen:]...)
+		}
+
+		baseLines[row] = string(result)
+	}
+
+	return strings.Join(baseLines, "\n")
+}
+
+// recalcLayout recomputes panel sizes based on current terminal dimensions and sidebar state.
+func (m *Model) recalcLayout() {
+	if m.width == 0 || m.height == 0 {
+		return
+	}
+
+	lay := computeSidebarLayout(m.width, m.sidebarOpen)
+	m.sidebarLay = lay
+
+	// If sidebar can't fit, force it closed.
+	if m.sidebarOpen && lay.sidebarW == 0 {
+		m.sidebarOpen = false
+	}
+
+	editorH := m.editor.EditorHeight()
+	mainH := m.height - 1 - editorH - 1 // header(1) + statusbar(1)
+	if mainH < 1 {
+		mainH = 1
+	}
+
+	m.results.SetSize(lay.mainW, mainH)
+	m.sidebar.SetSize(lay.sidebarW, mainH)
+	m.sidebar.SetCompact(lay.compactMode)
+}
+
+// copyLastResults copies the last query results to the clipboard via OSC 52.
+func (m *Model) copyLastResults(markdown bool) {
+	rows := m.session.LastRows
+	if len(rows) == 0 {
+		m.statusBar.SetFlash("  No results to copy", 3*time.Second)
+		return
+	}
+
+	var content string
+	if markdown {
+		content = renderMarkdownTable(rows)
+	} else {
+		resultW := m.sidebarLay.mainW
+		if resultW == 0 {
+			resultW = m.width
+		}
+		content = renderResultRows(rows, resultW, m.session.Format)
+	}
+
+	// Write to clipboard via OSC 52.
+	encoded := base64Encode(content)
+	osc := fmt.Sprintf("\033]52;c;%s\a", encoded)
+	fmt.Fprint(os.Stderr, osc)
+
+	word := "rows"
+	if len(rows) == 1 {
+		word = "row"
+	}
+
+	format := "table"
+	if markdown {
+		format = "markdown"
+	}
+
+	m.statusBar.SetFlash(
+		fmt.Sprintf("  Copied %d %s as %s", len(rows), word, format),
+		3*time.Second,
+	)
+}
+
+// renderMarkdownTable renders rows as a GitHub-flavored markdown table.
+func renderMarkdownTable(rows []map[string]interface{}) string {
+	if len(rows) == 0 {
+		return ""
+	}
+
+	// Collect columns deterministically.
+	colSet := make(map[string]struct{})
+	for _, row := range rows {
+		for k := range row {
+			colSet[k] = struct{}{}
+		}
+	}
+
+	cols := make([]string, 0, len(colSet))
+	for k := range colSet {
+		cols = append(cols, k)
+	}
+
+	// Sort: builtin fields first, then alphabetical.
+	sortColumns(cols)
+
+	var b strings.Builder
+
+	// Header.
+	b.WriteString("| ")
+	for i, c := range cols {
+		if i > 0 {
+			b.WriteString(" | ")
+		}
+		b.WriteString(c)
+	}
+	b.WriteString(" |\n")
+
+	// Separator.
+	b.WriteString("|")
+	for range cols {
+		b.WriteString(" --- |")
+	}
+	b.WriteByte('\n')
+
+	// Rows.
+	for _, row := range rows {
+		b.WriteString("| ")
+		for i, c := range cols {
+			if i > 0 {
+				b.WriteString(" | ")
+			}
+			if v, ok := row[c]; ok {
+				b.WriteString(fmt.Sprintf("%v", v))
+			}
+		}
+		b.WriteString(" |\n")
+	}
+
+	return b.String()
+}
+
+// sortColumns sorts column names with builtin fields first, then alphabetical.
+func sortColumns(cols []string) {
+	rank := map[string]int{
+		"_time": 0, "_raw": 1, "index": 2, "source": 3,
+		"_source": 4, "sourcetype": 5, "_sourcetype": 6, "host": 7,
+	}
+
+	for i := 1; i < len(cols); i++ {
+		for j := i; j > 0; j-- {
+			ri, oki := rank[cols[j]]
+			rj, okj := rank[cols[j-1]]
+
+			if oki && okj {
+				if ri < rj {
+					cols[j], cols[j-1] = cols[j-1], cols[j]
+				}
+			} else if oki {
+				cols[j], cols[j-1] = cols[j-1], cols[j]
+			} else if !okj && cols[j] < cols[j-1] {
+				cols[j], cols[j-1] = cols[j-1], cols[j]
+			}
+		}
+	}
+}
+
+// base64Encode returns the base64 encoding of a string.
+func base64Encode(s string) string {
+	return base64.StdEncoding.EncodeToString([]byte(s))
 }
 
 // Query execution commands.
@@ -760,17 +1149,22 @@ func waitForTailEvent(eventCh <-chan map[string]interface{}, errCh <-chan error)
 	}
 }
 
-// welcomeBanner returns the startup message.
-// The header already shows version + connection info, so this only has the usage hint.
+// welcomeBanner returns the startup message with example queries.
 func welcomeBanner() string {
 	t := ui.Stdout
 
-	return fmt.Sprintf("\n  Type %s for commands, %s for autocomplete, %s/%s for history, %s to exit.\n",
-		t.Accent.Render("/help"),
-		t.Accent.Render("Tab"),
-		t.Accent.Render("Ctrl+P"),
-		t.Accent.Render("Ctrl+N"),
-		t.Accent.Render("Ctrl+D"))
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString("  " + t.Bold.Render("Welcome to LynxDB Shell") + "\n")
+	b.WriteString("\n")
+	b.WriteString("  " + t.Dim.Render("Try a query:") + "\n")
+	b.WriteString("    " + t.Accent.Render("source=nginx | stats count by status") + "\n")
+	b.WriteString("    " + t.Accent.Render("level=error | timechart count span=5m") + "\n")
+	b.WriteString("    " + t.Accent.Render("| top 10 uri") + "\n")
+	b.WriteString("\n")
+	b.WriteString("  " + t.Dim.Render("Enter:run • ↑↓:history • Tab:complete • F1:help") + "\n")
+
+	return b.String()
 }
 
 // rewriteUnderscoreQuery handles "_ | <pipeline>" queries by extracting

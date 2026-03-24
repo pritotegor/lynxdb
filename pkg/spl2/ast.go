@@ -393,10 +393,18 @@ func (c *FillnullCommand) String() string {
 
 // GlimpseCommand represents: glimpse — schema exploration that samples events
 // and outputs field names, types, coverage, cardinality, and top values.
-type GlimpseCommand struct{}
+type GlimpseCommand struct {
+	SampleSize int // 0 means default (10000)
+}
 
-func (*GlimpseCommand) commandNode()     {}
-func (c *GlimpseCommand) String() string { return "glimpse" }
+func (*GlimpseCommand) commandNode() {}
+func (c *GlimpseCommand) String() string {
+	if c.SampleSize > 0 {
+		return fmt.Sprintf("glimpse %d", c.SampleSize)
+	}
+
+	return "glimpse"
+}
 
 // DescribeCommand represents: describe — logging passthrough that prints
 // schema info to stderr on first batch, then yields batches unchanged.
