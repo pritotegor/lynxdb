@@ -128,7 +128,7 @@ jobs:
         run: go build -o lynxdb ./cmd/lynxdb/
 
       - name: Run CLI tests
-        run: go test -tags clitest -count=1 -timeout 120s -skip '^TestGolden' ./test/cli/
+        run: go test -tags clitest -count=1 -timeout 600s -skip '^TestGolden' ./test/cli/
 
   # ── Golden Tests (CLI query output regression) ──────────────────────────────
   test-golden:

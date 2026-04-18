@@ -154,21 +154,46 @@ func normalizeNDJSON(raw string) string {
 //   - Whole-number floats (e.g., 5200.0) are converted to int64
 //   - Other floats are rounded to 12 significant digits to absorb
 //     cross-platform floating-point precision differences
+//   - String values containing absolute paths to testdata are stripped to
+//     a portable relative form so golden tests work across dev machines/CI
 func normalizeMap(m map[string]interface{}) {
 	for k, v := range m {
 		switch val := v.(type) {
 		case float64:
 			m[k] = normalizeFloat(val)
+		case string:
+			m[k] = normalizeTestdataPath(val)
 		case map[string]interface{}:
 			normalizeMap(val)
 		case []interface{}:
 			for i, elem := range val {
-				if f, ok := elem.(float64); ok {
-					val[i] = normalizeFloat(f)
+				switch e := elem.(type) {
+				case float64:
+					val[i] = normalizeFloat(e)
+				case string:
+					val[i] = normalizeTestdataPath(e)
 				}
 			}
 		}
 	}
+}
+
+// normalizeTestdataPath strips machine-specific absolute path prefixes from
+// strings referring to files under testdata/, so golden files produced on a
+// dev laptop match those produced in CI. Leaves non-matching strings alone.
+func normalizeTestdataPath(s string) string {
+	const marker = "/testdata/"
+	idx := strings.Index(s, marker)
+	if idx <= 0 {
+		return s
+	}
+	// Require the prefix to look like an absolute path so we don't rewrite
+	// arbitrary strings that happen to contain "/testdata/".
+	prefix := s[:idx]
+	if !strings.HasPrefix(prefix, "/") {
+		return s
+	}
+	return "testdata/" + s[idx+len(marker):]
 }
 
 // normalizeFloat converts integer-valued floats to int64, and rounds
