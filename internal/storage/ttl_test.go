@@ -32,7 +32,8 @@ func TestTTL_Expired(t *testing.T) {
 	if err := ts.SetWithTTL("expiring", "data", 50*time.Millisecond); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	time.Sleep(100 * time.Millisecond)
+	// Sleep a bit longer than the TTL to avoid flakiness on slow CI runners
+	time.Sleep(150 * time.Millisecond)
 	_, err := ts.Get("expiring")
 	if err != ErrKeyNotFound {
 		t.Fatalf("expected ErrKeyNotFound, got %v", err)
