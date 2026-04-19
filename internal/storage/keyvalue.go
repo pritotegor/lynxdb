@@ -1,66 +1,52 @@
 package storage
 
-import (
-	"errors"
-	"sync"
-)
+import "sync"
 
-// ErrKeyNotFound is returned when a key does not exist in the store.
-var ErrKeyNotFound = errors.New("key not found")
-
-// ErrEmptyKey is returned when an empty key is provided.
-var ErrEmptyKey = errors.New("key must not be empty")
-
-// Store is a thread-safe in-memory key-value store.
+// Store is a simple thread-safe in-memory key-value store.
 type Store struct {
 	mu   sync.RWMutex
-	data map[string][]byte
+	data map[string]string
 }
 
-// NewStore creates and returns a new Store instance.
+// NewStore initialises and returns an empty Store.
 func NewStore() *Store {
-	return &Store{
-		data: make(map[string][]byte),
-	}
+	return &Store{data: make(map[string]string)}
 }
 
-// Set stores the value for the given key.
-func (s *Store) Set(key string, value []byte) error {
+// Set stores the value under key. Returns ErrEmptyKey for blank keys.
+func (s *Store) Set(key, value string) error {
 	if key == "" {
 		return ErrEmptyKey
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.data[key] = value
+	s.mu.Unlock()
 	return nil
 }
 
-// Get retrieves the value associated with the given key.
-func (s *Store) Get(key string) ([]byte, error) {
-	if key == "" {
-		return nil, ErrEmptyKey
-	}
+// Get retrieves the value for key. Returns ErrKeyNotFound when absent.
+func (s *Store) Get(key string) (string, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	v, ok := s.data[key]
+	s.mu.RUnlock()
 	if !ok {
-		return nil, ErrKeyNotFound
+		return "", ErrKeyNotFound
 	}
 	return v, nil
 }
 
-// Delete removes the key and its value from the store.
+// Delete removes key from the store. Returns ErrKeyNotFound when absent.
 func (s *Store) Delete(key string) error {
-	if key == "" {
-		return ErrEmptyKey
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.data[key]; !ok {
+		return ErrKeyNotFound
+	}
 	delete(s.data, key)
 	return nil
 }
 
-// Keys returns all keys currently in the store.
+// Keys returns a snapshot of all keys currently in the store.
 func (s *Store) Keys() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
