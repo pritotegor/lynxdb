@@ -59,3 +59,20 @@ func TestKeys(t *testing.T) {
 		t.Fatalf("expected 2 keys, got %d", len(keys))
 	}
 }
+
+// TestSet_OverwriteValue verifies that setting a key twice updates the value
+// rather than returning an error or keeping the old value.
+func TestSet_OverwriteValue(t *testing.T) {
+	s := NewStore()
+	_ = s.Set("key", "original")
+	if err := s.Set("key", "updated"); err != nil {
+		t.Fatalf("Set (overwrite) failed: %v", err)
+	}
+	v, err := s.Get("key")
+	if err != nil {
+		t.Fatalf("Get after overwrite failed: %v", err)
+	}
+	if v != "updated" {
+		t.Fatalf("expected 'updated', got %q", v)
+	}
+}
