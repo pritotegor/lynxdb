@@ -1,6 +1,9 @@
 package storage
 
-import "sync"
+import (
+	"sort"
+	"sync"
+)
 
 // Store is a simple thread-safe in-memory key-value store.
 type Store struct {
@@ -46,7 +49,8 @@ func (s *Store) Delete(key string) error {
 	return nil
 }
 
-// Keys returns a snapshot of all keys currently in the store.
+// Keys returns a sorted snapshot of all keys currently in the store.
+// Sorted order makes iteration deterministic, which is handy during debugging.
 func (s *Store) Keys() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -54,5 +58,6 @@ func (s *Store) Keys() []string {
 	for k := range s.data {
 		keys = append(keys, k)
 	}
+	sort.Strings(keys)
 	return keys
 }
