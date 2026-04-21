@@ -111,7 +111,10 @@ func TestSet_EmptyValue(t *testing.T) {
 func TestDelete_ThenSet(t *testing.T) {
 	s := NewStore()
 	_ = s.Set("reuse", "first")
-	_ = s.Delete("reuse")
+	if err := s.Delete("reuse"); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+	// Re-inserting after delete should work cleanly — no leftover state.
 	if err := s.Set("reuse", "second"); err != nil {
 		t.Fatalf("Set after Delete failed: %v", err)
 	}
