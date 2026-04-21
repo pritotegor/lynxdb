@@ -17,6 +17,10 @@ type Store interface {
 
 	// Has returns true if the key exists in the store.
 	Has(key string) bool
+
+	// Keys returns all keys currently present in the store.
+	// Useful for debugging and introspection.
+	Keys() []string
 }
 
 // TTLStore extends Store with time-to-live capabilities.
