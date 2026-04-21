@@ -104,3 +104,22 @@ func TestSet_EmptyValue(t *testing.T) {
 		t.Fatalf("expected empty string, got %q", v)
 	}
 }
+
+// TestDelete_ThenSet verifies that a key can be re-added after being deleted.
+// This caught an issue in a similar store I worked on where tombstone entries
+// blocked subsequent writes to the same key.
+func TestDelete_ThenSet(t *testing.T) {
+	s := NewStore()
+	_ = s.Set("reuse", "first")
+	_ = s.Delete("reuse")
+	if err := s.Set("reuse", "second"); err != nil {
+		t.Fatalf("Set after Delete failed: %v", err)
+	}
+	v, err := s.Get("reuse")
+	if err != nil {
+		t.Fatalf("Get after Delete+Set failed: %v", err)
+	}
+	if v != "second" {
+		t.Fatalf("expected 'second', got %q", v)
+	}
+}
