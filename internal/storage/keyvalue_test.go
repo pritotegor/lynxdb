@@ -86,3 +86,21 @@ func TestKeys_EmptyStore(t *testing.T) {
 		t.Fatalf("expected 0 keys on empty store, got %d", len(keys))
 	}
 }
+
+// TestSet_EmptyValue verifies that storing an empty string as a value is
+// allowed — empty values are valid, only empty keys are rejected.
+// Note: I ran into a bug in an earlier project where empty values were
+// silently dropped; adding this to make sure that doesn't happen here.
+func TestSet_EmptyValue(t *testing.T) {
+	s := NewStore()
+	if err := s.Set("emptyval", ""); err != nil {
+		t.Fatalf("Set with empty value should succeed, got: %v", err)
+	}
+	v, err := s.Get("emptyval")
+	if err != nil {
+		t.Fatalf("Get after Set with empty value failed: %v", err)
+	}
+	if v != "" {
+		t.Fatalf("expected empty string, got %q", v)
+	}
+}
