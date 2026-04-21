@@ -55,6 +55,8 @@ func (s *Snapshotter) Save(data SnapshotData) error {
 
 	destPath := filepath.Join(s.dir, s.filename)
 	if err := os.Rename(tmpPath, destPath); err != nil {
+		// Clean up the orphaned temp file so it doesn't linger on disk.
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("snapshotter: failed to rename snapshot: %w", err)
 	}
 
