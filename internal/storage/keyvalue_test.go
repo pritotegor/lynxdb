@@ -76,3 +76,13 @@ func TestSet_OverwriteValue(t *testing.T) {
 		t.Fatalf("expected 'updated', got %q", v)
 	}
 }
+
+// TestKeys_EmptyStore verifies that Keys() returns an empty slice (not nil)
+// when no entries have been added. Useful for callers that range over the result.
+func TestKeys_EmptyStore(t *testing.T) {
+	s := NewStore()
+	keys := s.Keys()
+	if len(keys) != 0 {
+		t.Fatalf("expected 0 keys on empty store, got %d", len(keys))
+	}
+}
