@@ -8,9 +8,11 @@ type Store interface {
 	Set(key, value string) error
 
 	// Get retrieves the value associated with the given key.
+	// Returns ErrNotFound if the key does not exist.
 	Get(key string) (string, error)
 
 	// Delete removes the key and its associated value from the store.
+	// Returns nil if the key does not exist (no-op).
 	Delete(key string) error
 
 	// Has returns true if the key exists in the store.
@@ -22,6 +24,7 @@ type TTLStore interface {
 	Store
 
 	// SetWithTTL stores a value under the given key with an expiration duration.
+	// A ttl of zero or negative is treated as no expiration.
 	SetWithTTL(key, value string, ttl time.Duration) error
 
 	// TTLOf returns the remaining time-to-live for the given key.
