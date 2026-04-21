@@ -17,6 +17,7 @@ func NewStore() *Store {
 }
 
 // Set stores the value under key. Returns ErrEmptyKey for blank keys.
+// Note: empty string values are permitted; only empty keys are rejected.
 func (s *Store) Set(key, value string) error {
 	if key == "" {
 		return ErrEmptyKey
@@ -60,4 +61,11 @@ func (s *Store) Keys() []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// Len returns the number of keys currently held in the store.
+func (s *Store) Len() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.data)
 }
